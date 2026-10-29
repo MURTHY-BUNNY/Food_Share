@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="FoodShare connects food donors with people and organizations that need food. List surplus food, browse what is available nearby, and arrange a pickup.">
+    <title>FoodShare | Share Food, Share Hope</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%23198754'/%3E%3Cpath d='M28 70c0-22 18-38 44-38 0 22-18 38-44 38z' fill='%23fff'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="../css/vendor/bootstrap-icons.css">
+    <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+
+<header class="navbar">
+    <div class="container navbar-inner">
+        <a class="logo" href="index.html">
+            <span class="logo-mark"><i class="bi bi-basket2-fill" aria-hidden="true"></i></span>
+            <span>FoodShare</span>
+        </a>
+
+        <button class="nav-toggle" type="button" aria-expanded="false"
+                aria-controls="site-nav" aria-label="Open menu">
+            <i class="bi bi-list" aria-hidden="true"></i>
+        </button>
+
+        <nav class="nav-links" id="site-nav" aria-label="Main navigation">
+            <a href="index.html">Home</a>
+            <a href="donate.html">Donate Food</a>
+            <a href="find-food.html">Find Food</a>
+            <a href="donor-dashboard.html">My Dashboard</a>
+            <a href="contact.html">Contact</a>
+            <a href="donor-login.html" data-auth-link>Donor Login</a>
+            <a href="donor-register.html" class="btn btn-small">Join Us</a>
+        </nav>
+    </div>
+</header>
+
+<main>
+    <section class="hero">
+        <div class="container hero-layout">
+            <div class="hero-content">
+                <span class="badge">
+                    <i class="bi bi-geo-alt-fill" aria-hidden="true"></i>
+                    Food donation and collection
+                </span>
+
+                <h1>Share Food.<br>Spread Hope.</h1>
+
+                <p>
+                    FoodShare connects people and organizations with surplus food
+                    to the communities that need it. List what you can spare,
+                    browse what is available nearby, and arrange a pickup before
+                    it goes to waste.
+                </p>
+
+                <div class="hero-actions">
+                    <a href="donor-register.html" class="btn">
+                        <i class="bi bi-person-plus" aria-hidden="true"></i>
+                        Become a Donor
+                    </a>
+
+                    <a href="find-food.html" class="btn btn-outline">
+                        <i class="bi bi-search" aria-hidden="true"></i>
+                        Find Available Food
+                    </a>
+                </div>
+            </div>
+
+            <div class="hero-visual">
+                <img
+                    src="https://images.unsplash.com/photo-1488459716781-31db52582fe9?auto=format&fit=crop&w=1200&q=85"
+                    alt="Fresh vegetables and fruit laid out for sharing"
+                    width="1200"
+                    height="800"
+                >
+
+                <div class="image-note">
+                    <span class="note-icon"><i class="bi bi-box-seam" aria-hidden="true"></i></span>
+                    <div>
+                        <strong id="hero-available-count">Checking listings…</strong>
+                        <p id="hero-available-hint">Available for pickup today</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="section">
+        <div class="container">
+            <div class="text-center">
+                <h2 class="section-title">How FoodShare Works</h2>
+                <p class="section-description">
+                    Three steps between surplus food and someone who needs it.
+                </p>
+            </div>
+
+            <div class="grid" style="margin-top:32px;">
+                <article class="card">
+                    <div class="card-icon"><i class="bi bi-basket" aria-hidden="true"></i></div>
+                    <h3>Donate Food</h3>
+                    <p>
+                        Describe the food, how much there is, where it can be
+                        collected and by when.
+                    </p>
+                    <a class="card-link" href="donate.html">
+                        List a donation
+                        <i class="bi bi-arrow-right" aria-hidden="true"></i>
+                    </a>
+                </article>
+
+                <article class="card">
+                    <div class="card-icon"><i class="bi bi-search" aria-hidden="true"></i></div>
+                    <h3>Find Food</h3>
+                    <p>
+                        Filter available donations by category, quantity or the
+                        area it can be collected from.
+                    </p>
+                    <a class="card-link" href="find-food.html">
+                        Browse listings
+                        <i class="bi bi-arrow-right" aria-hidden="true"></i>
+                    </a>
+                </article>
+
+                <article class="card">
+                    <div class="card-icon"><i class="bi bi-people" aria-hidden="true"></i></div>
+                    <h3>Request Food</h3>
+                    <p>
+                        Tell us what your household or organization needs and
+                        the FoodShare team will match it with a donation.
+                    </p>
+                    <a class="card-link" href="find-food.html#request-food">
+                        Submit a request
+                        <i class="bi bi-arrow-right" aria-hidden="true"></i>
+                    </a>
+                </article>
+            </div>
+        </div>
+    </section>
+
+    <section class="section" style="background:var(--primary-light);">
+        <div class="container">
+            <div class="panel-head">
+                <div>
+                    <h2>Available for pickup now</h2>
+                    <p class="panel-subtitle">
+                        The most recent donations that have not passed their pickup deadline.
+                    </p>
+                </div>
+
+                <a href="find-food.html" class="btn btn-outline btn-small">
+                    See all listings
+                </a>
+            </div>
+
+            <div id="home-listings" class="listing-grid">
+                <p class="loading">Loading donations</p>
+            </div>
+        </div>
+    </section>
+
+    <section class="section text-center">
+        <div class="container">
+            <h2 class="section-title">Have surplus food?</h2>
+            <p class="section-description" style="margin-inline:auto;">
+                Create a donor account, or sign in if you already have one, and
+                list it in a couple of minutes.
+            </p>
+
+            <div class="hero-actions" style="justify-content:center;margin-top:22px;">
+                <a href="donor-register.html" class="btn">Create a donor account</a>
+                <a href="donor-login.html" class="btn btn-outline">Sign in</a>
+            </div>
+        </div>
+    </section>
+</main>
+
+<footer class="footer">
+    <div class="container footer-inner">
+        <div>
+            <p><strong>FoodShare</strong> — food donation and collection</p>
+            <p class="footer-copy">&copy; <span id="current-year"></span> FoodShare</p>
+        </div>
+
+        <nav class="footer-links" aria-label="Footer navigation">
+            <a href="find-food.html">Find food</a>
+            <a href="donate.html">Donate food</a>
+            <a href="track.html">Track a donation</a>
+            <a href="donor-login.html">Donor sign in</a>
+            <a href="admin-login.html">Admin</a>
+        </nav>
+    </div>
+</footer>
+
+<script src="../js/api.js"></script>
+<script src="../js/food-card.js"></script>
+<script src="../js/home.js"></script>
+</body>
+</html>

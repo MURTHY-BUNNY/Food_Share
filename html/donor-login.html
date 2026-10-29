@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Sign in to the FoodShare donor area to publish and manage food donations.">
+    <title>Donor Login | FoodShare</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%23198754'/%3E%3Cpath d='M28 70c0-22 18-38 44-38 0 22-18 38-44 38z' fill='%23fff'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="../css/vendor/bootstrap-icons.css">
+    <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+
+<header class="navbar">
+    <div class="container navbar-inner">
+        <a class="logo" href="index.html">
+            <span class="logo-mark"><i class="bi bi-basket2-fill" aria-hidden="true"></i></span>
+            <span>FoodShare</span>
+        </a>
+
+        <button class="nav-toggle" type="button" aria-expanded="false"
+                aria-controls="site-nav" aria-label="Open menu">
+            <i class="bi bi-list" aria-hidden="true"></i>
+        </button>
+
+        <nav class="nav-links" id="site-nav" aria-label="Main navigation">
+            <a href="index.html">Home</a>
+            <a href="donate.html">Donate Food</a>
+            <a href="find-food.html">Find Food</a>
+            <a href="donor-dashboard.html">My Dashboard</a>
+            <a href="contact.html">Contact</a>
+            <a href="donor-login.html" data-auth-link>Donor Login</a>
+            <a href="donor-register.html" class="btn btn-small">Join Us</a>
+        </nav>
+    </div>
+</header>
+
+<main class="container">
+    <div class="split-main split-main--center">
+        <section class="login-intro">
+            <span class="badge">
+                <i class="bi bi-person-badge" aria-hidden="true"></i>
+                Donor area
+            </span>
+
+            <h1>Sign in to manage your donations</h1>
+
+            <p>
+                Publish surplus food, update the details when something changes,
+                and mark a donation complete once it has been collected.
+            </p>
+
+            <ul class="intro-list">
+                <li>
+                    <i class="bi bi-check2-circle" aria-hidden="true"></i>
+                    <span>Your name and phone number are attached to every listing automatically.</span>
+                </li>
+                <li>
+                    <i class="bi bi-clock-history" aria-hidden="true"></i>
+                    <span>Listings stop appearing to collectors after their pickup deadline.</span>
+                </li>
+                <li>
+                    <i class="bi bi-building-check" aria-hidden="true"></i>
+                    <span>Organization accounts stay pending until an administrator verifies them.</span>
+                </li>
+            </ul>
+        </section>
+
+        <section class="login-card" aria-labelledby="login-heading">
+            <h2 id="login-heading">Sign in</h2>
+            <p class="form-description">Use the email address you registered with.</p>
+
+            <div id="login-message" class="message" role="status" aria-live="polite"></div>
+
+            <form id="donor-login-form" novalidate>
+                <div class="form-group">
+                    <label for="email">Email address</label>
+                    <input type="email" id="email" name="email" required
+                           autocomplete="username" placeholder="you@example.com">
+                </div>
+
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" required
+                           autocomplete="current-password" placeholder="Your password">
+                    <p class="form-help form-help--end">
+                        <a href="forgot-password.html">Forgot your password?</a>
+                    </p>
+                </div>
+
+                <button type="submit" id="login-button" class="btn btn-full">
+                    <i class="bi bi-box-arrow-in-right" aria-hidden="true"></i>
+                    Sign in
+                </button>
+            </form>
+
+            <p class="form-footer">
+                No donor account yet?
+                <a href="donor-register.html">Create one</a>
+            </p>
+
+            <p class="form-footer">
+                Administrator?
+                <a href="admin-login.html">Admin sign in</a>
+            </p>
+        </section>
+    </div>
+</main>
+
+<footer class="footer">
+    <div class="container footer-inner">
+        <div>
+            <p><strong>FoodShare</strong> — food donation and collection</p>
+            <p class="footer-copy">&copy; <span id="current-year"></span> FoodShare</p>
+        </div>
+
+        <nav class="footer-links" aria-label="Footer navigation">
+            <a href="find-food.html">Find food</a>
+            <a href="donate.html">Donate food</a>
+            <a href="track.html">Track a donation</a>
+            <a href="donor-register.html">Create account</a>
+            <a href="admin-login.html">Admin</a>
+        </nav>
+    </div>
+</footer>
+
+<script src="../js/api.js"></script>
+<script src="../js/donor-login.js"></script>
+</body>
+</html>

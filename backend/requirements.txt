@@ -1,0 +1,10 @@
+
+fastapi
+uvicorn[standard]
+mysql-connector-python
+python-dotenv
+PyJWT
+pwdlib[argon2]
+python-multipart
+pydantic[email]
+slowapi

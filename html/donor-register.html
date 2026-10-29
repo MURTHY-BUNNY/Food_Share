@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Create a FoodShare donor account as an individual or an organization.">
+    <title>Create a Donor Account | FoodShare</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%23198754'/%3E%3Cpath d='M28 70c0-22 18-38 44-38 0 22-18 38-44 38z' fill='%23fff'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="../css/vendor/bootstrap-icons.css">
+    <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+
+<header class="navbar">
+    <div class="container navbar-inner">
+        <a class="logo" href="index.html">
+            <span class="logo-mark"><i class="bi bi-basket2-fill" aria-hidden="true"></i></span>
+            <span>FoodShare</span>
+        </a>
+
+        <button class="nav-toggle" type="button" aria-expanded="false"
+                aria-controls="site-nav" aria-label="Open menu">
+            <i class="bi bi-list" aria-hidden="true"></i>
+        </button>
+
+        <nav class="nav-links" id="site-nav" aria-label="Main navigation">
+            <a href="index.html">Home</a>
+            <a href="donate.html">Donate Food</a>
+            <a href="find-food.html">Find Food</a>
+            <a href="donor-dashboard.html">My Dashboard</a>
+            <a href="contact.html">Contact</a>
+            <a href="donor-login.html" data-auth-link>Donor Login</a>
+            <a href="donor-register.html" class="btn btn-small">Join Us</a>
+        </nav>
+    </div>
+</header>
+
+<main class="container">
+    <div class="page-head">
+        <h1>Create a donor account</h1>
+        <p class="page-intro">
+            Register as an individual or an organization. We email a 6-digit code
+            to confirm the address, and the account is created as soon as you
+            enter it. Individual accounts can then publish donations immediately;
+            organization accounts are reviewed by an administrator before their
+            listings go live.
+        </p>
+    </div>
+
+    <div class="split-main" style="padding-top:0;">
+        <section class="panel" aria-labelledby="register-heading">
+            <div class="panel-head">
+                <div>
+                    <h2 id="register-heading">Account details</h2>
+                    <p class="panel-subtitle" id="register-subtitle">Fields marked with an asterisk are required.</p>
+                </div>
+            </div>
+
+            <ol class="steps" aria-label="Registration steps">
+                <li class="step is-current" data-step-indicator="1">
+                    <span class="step-index">1</span> Account details
+                </li>
+                <li class="step" data-step-indicator="2">
+                    <span class="step-index">2</span> Verify email
+                </li>
+            </ol>
+
+            <div id="donor-register-message" class="message" role="status" aria-live="polite"></div>
+
+            <form id="donor-register-form" novalidate>
+                <div class="form-group">
+                    <label for="full_name">Full name <span class="required">*</span></label>
+                    <input id="full_name" name="full_name" type="text" required
+                           minlength="2" maxlength="150" autocomplete="name">
+                </div>
+
+                <div class="form-group">
+                    <label for="account_type">Account type <span class="required">*</span></label>
+                    <select id="account_type" name="account_type" required>
+                        <option value="Individual">Individual</option>
+                        <option value="Organization">Organization</option>
+                    </select>
+                </div>
+
+                <div class="form-group" id="organization-field" hidden>
+                    <label for="organization_name">Organization name <span class="required">*</span></label>
+                    <input id="organization_name" name="organization_name" type="text"
+                           maxlength="200" placeholder="Registered name of the organization">
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="email">Email address <span class="required">*</span></label>
+                        <input id="email" name="email" type="email" required
+                               maxlength="255" autocomplete="email" placeholder="you@example.com">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="phone">Phone number <span class="required">*</span></label>
+                        <input id="phone" name="phone" type="tel" required
+                               minlength="7" maxlength="30" autocomplete="tel">
+                        <p class="form-help">Shown to the person collecting your food.</p>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="location">Location <span class="required">*</span></label>
+                    <input id="location" name="location" type="text" required
+                           minlength="2" maxlength="255" placeholder="Area, city">
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="password">Password <span class="required">*</span></label>
+                        <input id="password" name="password" type="password" required
+                               minlength="8" maxlength="128" autocomplete="new-password">
+                        <p class="form-help">At least 8 characters.</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="confirm_password">Confirm password <span class="required">*</span></label>
+                        <input id="confirm_password" name="confirm_password" type="password"
+                               required autocomplete="new-password">
+                    </div>
+                </div>
+
+                <div class="form-actions">
+                    <button id="donor-register-button" type="submit" class="btn">
+                        <i class="bi bi-envelope-arrow-up" aria-hidden="true"></i>
+                        Send verification code
+                    </button>
+                    <a href="donor-login.html" class="btn btn-secondary">I already have an account</a>
+                </div>
+            </form>
+
+            <form id="donor-verify-form" novalidate hidden>
+                <div class="recipient">
+                    <i class="bi bi-envelope-check" aria-hidden="true"></i>
+                    <span class="recipient-text">
+                        <strong id="verify-email">you@example.com</strong>
+                        <span>Code expires in <span id="verify-expiry">15</span> minutes. Check the spam folder if it has not arrived.</span>
+                    </span>
+                    <button id="change-email-button" type="button" class="link-btn">Change</button>
+                </div>
+
+                <p id="verify-demo-code" class="demo-code" hidden>
+                    <i class="bi bi-info-circle" aria-hidden="true"></i>
+                    Demo mode, no mail server set up. Code:
+                    <span class="demo-code-value" id="verify-demo-value"></span>
+                </p>
+
+                <div class="form-group">
+                    <label for="verify-code">6-digit code <span class="required">*</span></label>
+                    <div id="verify-code-input"></div>
+                    <p class="form-help" id="verify-code-help">Digits only. Paste the whole code if you copied it.</p>
+                </div>
+
+                <div class="resend-row">
+                    <span id="resend-timer">You can request another code shortly.</span>
+                    <button id="resend-code-button" type="button" class="link-btn" disabled>
+                        Resend code
+                    </button>
+                </div>
+
+                <div class="form-actions">
+                    <button id="verify-submit-button" type="submit" class="btn" disabled>
+                        <i class="bi bi-shield-check" aria-hidden="true"></i>
+                        Verify and sign in
+                    </button>
+                </div>
+            </form>
+        </section>
+
+        <aside class="panel" aria-labelledby="account-types-heading">
+            <div class="panel-head">
+                <h2 id="account-types-heading">What each account type can do</h2>
+            </div>
+
+            <dl class="detail-list">
+                <div>
+                    <dt>Individual</dt>
+                    <dd>Publish donations straight away and manage them from your dashboard.</dd>
+                </div>
+                <div>
+                    <dt>Organization</dt>
+                    <dd>Same tools, but an administrator verifies the account first.</dd>
+                </div>
+                <div>
+                    <dt>Email check</dt>
+                    <dd>A six-digit code goes to your inbox. The account exists only once you enter it, and the code expires after 15 minutes.</dd>
+                </div>
+                <div>
+                    <dt>What is public</dt>
+                    <dd>Food name, quantity, category, pickup location, pickup deadline and your donor name.</dd>
+                </div>
+                <div>
+                    <dt>What stays private</dt>
+                    <dd>Your email address. Your phone number is only shown on the donation detail page.</dd>
+                </div>
+            </dl>
+        </aside>
+    </div>
+</main>
+
+<footer class="footer">
+    <div class="container footer-inner">
+        <div>
+            <p><strong>FoodShare</strong> — food donation and collection</p>
+            <p class="footer-copy">&copy; <span id="current-year"></span> FoodShare</p>
+        </div>
+
+        <nav class="footer-links" aria-label="Footer navigation">
+            <a href="find-food.html">Find food</a>
+            <a href="donate.html">Donate food</a>
+            <a href="track.html">Track a donation</a>
+            <a href="donor-login.html">Donor sign in</a>
+            <a href="admin-login.html">Admin</a>
+        </nav>
+    </div>
+</footer>
+
+<script src="../js/api.js"></script>
+<script src="../js/otp-input.js"></script>
+<script src="../js/donor-register.js"></script>
+</body>
+</html>
