@@ -6,13 +6,17 @@ import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Literal
-
+from pathlib import Path
 import jwt
 import mysql.connector
 from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.security import (
+    OAuth2PasswordRequestForm,
+    HTTPBearer,
+    HTTPAuthorizationCredentials,
+)
 from pydantic import BaseModel, Field, EmailStr
 from mysql.connector import Error
 
@@ -25,7 +29,8 @@ from emailer import (
     status as mail_status,
 )
 
-load_dotenv()
+BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
 
 # --------------------------------------------------
 # APPLICATION CONFIGURATION
@@ -289,9 +294,27 @@ def decode_token(token: str, secret: str, expected_type: str):
     return payload
 
 
+
+# Swagger UI Bearer authentication
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
 def get_bearer_token(
-    authorization: Optional[str] = Header(default=None, alias="Authorization")
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(
+        bearer_scheme
+    )
 ):
+    """Read and return the Bearer JWT token."""
+
+    if credentials is None or not credentials.credentials.strip():
+        raise HTTPException(
+            status_code=401,
+            detail="Authorization token required.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return credentials.credentials.strip()
+
     """Read the Authorization header and return the JWT token."""
     if not authorization or not authorization.strip():
         raise HTTPException(
