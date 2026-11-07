@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Manage your FoodShare donor profile: personal details, profile photo, password and account deletion.">
+    <title>My Profile | FoodShare</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%23198754'/%3E%3Cpath d='M28 70c0-22 18-38 44-38 0 22-18 38-44 38z' fill='%23fff'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="../css/vendor/bootstrap-icons.css">
+    <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+
+<header class="navbar">
+    <div class="container navbar-inner">
+        <a class="logo" href="index.html">
+            <span class="logo-mark"><i class="bi bi-basket2-fill" aria-hidden="true"></i></span>
+            <span>FoodShare</span>
+        </a>
+
+        <button class="nav-toggle" type="button" aria-expanded="false"
+                aria-controls="site-nav" aria-label="Open menu">
+            <i class="bi bi-list" aria-hidden="true"></i>
+        </button>
+
+        <nav class="nav-links" id="site-nav" aria-label="Main navigation">
+            <a href="index.html">Home</a>
+            <a href="donate.html">Donate Food</a>
+            <a href="find-food.html">Find Food</a>
+            <a href="donor-dashboard.html">My Dashboard</a>
+            <a href="contact.html">Contact</a>
+            <a href="donor-profile.html" class="nav-profile-link"
+               aria-current="page" aria-label="My Profile" title="My Profile">
+                <i class="bi bi-person-circle" aria-hidden="true"></i>
+                <span class="sr-only">My Profile</span>
+            </a>
+            <a href="donor-login.html" data-auth-link>Donor Login</a>
+        </nav>
+    </div>
+</header>
+
+<main class="container account-page">
+    <div class="account-layout">
+
+        <!-- Account navigation, shared shape with the dashboard -->
+        <aside class="account-nav" aria-label="Donor account navigation">
+            <a class="account-nav-link" href="donor-dashboard.html">
+                <i class="bi bi-house-door" aria-hidden="true"></i>
+                My Dashboard
+            </a>
+
+            <a class="account-nav-link is-current" href="donor-profile.html"
+               aria-current="page">
+                <i class="bi bi-person" aria-hidden="true"></i>
+                My Profile
+            </a>
+
+            <a class="account-nav-link" href="donor-dashboard.html#donations-panel">
+                <i class="bi bi-box-seam" aria-hidden="true"></i>
+                My Donations
+            </a>
+
+            <a class="account-nav-link" href="donor-login.html" id="profile-signout">
+                <i class="bi bi-box-arrow-right" aria-hidden="true"></i>
+                Logout
+            </a>
+        </aside>
+
+        <div class="account-main">
+            <div class="page-head">
+                <p class="eyebrow">Account settings</p>
+                <h1>My Profile</h1>
+                <p class="page-intro">
+                    Manage your personal information, password, and account settings.
+                </p>
+            </div>
+
+            <div id="profile-message" class="message" role="status" aria-live="polite"></div>
+
+            <div class="account-grid">
+
+                <!-- Left column: summary + editable details -->
+                <div class="account-col">
+
+                    <section class="panel identity-card" aria-labelledby="identity-heading">
+                        <div class="identity-head">
+                            <div class="avatar">
+                                <img id="summary-photo" class="avatar-img"
+                                     src="../assets/default-avatar.svg"
+                                     alt="Your profile photo" width="96" height="96">
+                                <a class="avatar-badge" href="#photo-heading"
+                                   aria-label="Change profile photo">
+                                    <i class="bi bi-camera" aria-hidden="true"></i>
+                                </a>
+                            </div>
+
+                            <div class="identity-text">
+                                <h2 id="identity-heading">
+                                    <span id="summary-name">Loading account…</span>
+                                </h2>
+                                <div class="identity-badges">
+                                    <span id="summary-status"></span>
+                                    <span class="badge" id="summary-type"></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <dl class="identity-list">
+                            <div>
+                                <dt><i class="bi bi-envelope" aria-hidden="true"></i> Email</dt>
+                                <dd id="summary-email">—</dd>
+                            </div>
+                            <div>
+                                <dt><i class="bi bi-telephone" aria-hidden="true"></i> Phone</dt>
+                                <dd id="summary-phone">—</dd>
+                            </div>
+                            <div>
+                                <dt><i class="bi bi-person" aria-hidden="true"></i> Account type</dt>
+                                <dd id="summary-account-type">—</dd>
+                            </div>
+                            <div id="summary-organization-row" hidden>
+                                <dt><i class="bi bi-building" aria-hidden="true"></i> Organization</dt>
+                                <dd id="summary-organization">—</dd>
+                            </div>
+                            <div>
+                                <dt><i class="bi bi-geo-alt" aria-hidden="true"></i> Location</dt>
+                                <dd id="summary-location">—</dd>
+                            </div>
+                            <div>
+                                <dt><i class="bi bi-calendar-check" aria-hidden="true"></i> Member since</dt>
+                                <dd id="summary-created">—</dd>
+                            </div>
+                        </dl>
+                    </section>
+
+                    <section class="panel" aria-labelledby="edit-profile-heading">
+                        <div class="panel-head">
+                            <div>
+                                <h2 id="edit-profile-heading">
+                                    <i class="bi bi-pencil-square" aria-hidden="true"></i>
+                                    Edit profile
+                                </h2>
+                                <p class="panel-subtitle">
+                                    Fields marked with an asterisk are required.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div id="details-message" class="message" role="status" aria-live="polite"></div>
+
+                        <form id="profile-form" novalidate>
+                            <div class="form-group">
+                                <label for="profile-full-name">
+                                    Full name <span class="required">*</span>
+                                </label>
+                                <input id="profile-full-name" name="full_name" type="text"
+                                       required minlength="2" maxlength="150"
+                                       autocomplete="name">
+                            </div>
+
+                            <div class="form-group">
+                                <label for="profile-email">Email address</label>
+                                <div class="input-with-icon">
+                                    <input id="profile-email" name="email" type="email"
+                                           readonly aria-describedby="profile-email-help">
+                                    <i class="bi bi-lock" aria-hidden="true"></i>
+                                </div>
+                                <p class="form-help" id="profile-email-help">
+                                    Your verified address cannot be changed here.
+                                </p>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="profile-phone">
+                                        Phone number <span class="required">*</span>
+                                    </label>
+                                    <input id="profile-phone" name="phone" type="tel"
+                                           required minlength="7" maxlength="30"
+                                           autocomplete="tel">
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="profile-account-type">Account type</label>
+                                    <input id="profile-account-type" type="text" readonly>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="profile-location">
+                                    Location <span class="required">*</span>
+                                </label>
+                                <input id="profile-location" name="location" type="text"
+                                       required minlength="2" maxlength="255"
+                                       autocomplete="address-level2" placeholder="Area, city">
+                            </div>
+
+                            <div class="form-group" id="organization-field" hidden>
+                                <label for="profile-organization">
+                                    Organization name <span class="required">*</span>
+                                </label>
+                                <input id="profile-organization" name="organization_name"
+                                       type="text" maxlength="200"
+                                       autocomplete="organization">
+                            </div>
+
+                            <div class="form-actions">
+                                <button id="save-profile-button" type="submit" class="btn">
+                                    <i class="bi bi-check2-circle" aria-hidden="true"></i>
+                                    Save changes
+                                </button>
+                                <button id="cancel-profile-button" type="button"
+                                        class="btn btn-secondary">
+                                    Cancel
+                                </button>
+                                <a class="btn btn-ghost" href="donor-dashboard.html">
+                                    <i class="bi bi-arrow-left" aria-hidden="true"></i>
+                                    Back to dashboard
+                                </a>
+                            </div>
+                        </form>
+                    </section>
+                </div>
+
+                <!-- Right column: photo, password, deletion -->
+                <div class="account-col">
+
+                    <section class="panel" aria-labelledby="photo-heading">
+                        <div class="panel-head">
+                            <div>
+                                <h2 id="photo-heading">
+                                    <i class="bi bi-image" aria-hidden="true"></i>
+                                    Profile photo
+                                </h2>
+                                <p class="panel-subtitle">
+                                    JPG, JPEG, PNG or WEBP. Maximum 2 MB.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div class="photo-preview">
+                            <img id="profile-photo-preview" class="avatar-img"
+                                 src="../assets/default-avatar.svg"
+                                 alt="Your profile photo preview" width="140" height="140">
+                        </div>
+
+                        <div class="photo-actions">
+                            <label class="btn btn-secondary" for="profile-photo-input">
+                                <i class="bi bi-upload" aria-hidden="true"></i>
+                                Choose photo
+                            </label>
+
+                            <input id="profile-photo-input" name="photo" type="file"
+                                   accept="image/jpeg,image/jpg,image/png,image/webp" hidden>
+
+                            <button id="upload-photo-button" class="btn" type="button" disabled>
+                                <i class="bi bi-cloud-upload" aria-hidden="true"></i>
+                                Upload photo
+                            </button>
+
+                            <button id="remove-photo-button" class="btn btn-ghost"
+                                    type="button" hidden>
+                                <i class="bi bi-trash" aria-hidden="true"></i>
+                                Remove
+                            </button>
+                        </div>
+
+                        <div id="photo-message" class="message" role="status" aria-live="polite"></div>
+
+                        <p class="form-help">
+                            Your photo appears here and next to your name on the dashboard.
+                        </p>
+                    </section>
+
+                    <section class="panel" aria-labelledby="password-heading">
+                        <div class="panel-head">
+                            <div>
+                                <h2 id="password-heading">
+                                    <i class="bi bi-shield-lock" aria-hidden="true"></i>
+                                    Change password
+                                </h2>
+                                <p class="panel-subtitle">
+                                    At least 8 characters, different from your current password.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div id="change-password-message" class="message"
+                             role="status" aria-live="polite"></div>
+
+                        <form id="change-password-form" novalidate>
+                            <div class="form-group">
+                                <label for="current-password">
+                                    Current password <span class="required">*</span>
+                                </label>
+                                <div class="input-with-action">
+                                    <input id="current-password" name="current_password"
+                                           type="password" required maxlength="128"
+                                           autocomplete="current-password">
+                                    <button type="button" class="input-action"
+                                            data-toggle-password="current-password"
+                                            aria-label="Show current password"
+                                            aria-pressed="false">
+                                        <i class="bi bi-eye" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="new-password">
+                                    New password <span class="required">*</span>
+                                </label>
+                                <div class="input-with-action">
+                                    <input id="new-password" name="new_password"
+                                           type="password" required minlength="8"
+                                           maxlength="128" autocomplete="new-password">
+                                    <button type="button" class="input-action"
+                                            data-toggle-password="new-password"
+                                            aria-label="Show new password"
+                                            aria-pressed="false">
+                                        <i class="bi bi-eye" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="confirm-new-password">
+                                    Confirm new password <span class="required">*</span>
+                                </label>
+                                <div class="input-with-action">
+                                    <input id="confirm-new-password" name="confirm_new_password"
+                                           type="password" required minlength="8"
+                                           maxlength="128" autocomplete="new-password">
+                                    <button type="button" class="input-action"
+                                            data-toggle-password="confirm-new-password"
+                                            aria-label="Show confirmed password"
+                                            aria-pressed="false">
+                                        <i class="bi bi-eye" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="form-actions">
+                                <button id="change-password-submit" type="submit" class="btn">
+                                    <i class="bi bi-shield-check" aria-hidden="true"></i>
+                                    Update password
+                                </button>
+                            </div>
+                        </form>
+                    </section>
+
+                    <section class="panel danger-panel" aria-labelledby="delete-heading">
+                        <div class="panel-head">
+                            <div>
+                                <h2 id="delete-heading">
+                                    <i class="bi bi-exclamation-octagon" aria-hidden="true"></i>
+                                    Delete my account
+                                </h2>
+                                <p class="panel-subtitle">This action cannot be undone.</p>
+                            </div>
+                        </div>
+
+                        <p class="danger-text">
+                            Deleting your account removes your profile details and cancels
+                            active listings. Donation history is kept in anonymized form so
+                            platform records stay accurate. Registered with Google and no
+                            password? Set one with “Forgot password” on the sign-in page first.
+                        </p>
+
+                        <div id="account-delete-message" class="message"
+                             role="status" aria-live="polite"></div>
+
+                        <button id="delete-account-open" type="button" class="btn btn-danger">
+                            <i class="bi bi-trash" aria-hidden="true"></i>
+                            Delete my account
+                        </button>
+
+                        <dialog id="delete-account-dialog" aria-labelledby="delete-account-title">
+                            <form id="delete-account-form" method="dialog" class="panel">
+                                <h2 id="delete-account-title">Delete your FoodShare account?</h2>
+                                <p>
+                                    Your profile, photo and contact details are removed,
+                                    active listings are cancelled, and donation history is
+                                    anonymized. This cannot be undone.
+                                </p>
+
+                                <div class="form-group">
+                                    <label for="delete-account-password">Current password</label>
+                                    <input id="delete-account-password" type="password"
+                                           autocomplete="current-password" required maxlength="128">
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="delete-account-confirmation">Type DELETE to confirm</label>
+                                    <input id="delete-account-confirmation" type="text"
+                                           autocomplete="off" required>
+                                </div>
+
+                                <div class="form-actions">
+                                    <button type="button" id="delete-account-cancel"
+                                            class="btn btn-secondary">
+                                        Keep my account
+                                    </button>
+                                    <button type="submit" id="delete-account-submit"
+                                            class="btn btn-danger">
+                                        Permanently delete
+                                    </button>
+                                </div>
+                            </form>
+                        </dialog>
+                    </section>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<footer class="footer">
+    <div class="container footer-inner">
+        <div>
+            <p><strong>FoodShare</strong> — food donation and collection</p>
+            <p class="footer-copy">&copy; <span id="current-year"></span> FoodShare</p>
+        </div>
+
+        <nav class="footer-links" aria-label="Footer navigation">
+            <a href="find-food.html">Find food</a>
+            <a href="donate.html">Donate food</a>
+            <a href="donor-dashboard.html">My dashboard</a>
+            <a href="donor-login.html">Donor sign in</a>
+        </nav>
+    </div>
+</footer>
+
+<script src="../js/api.js"></script>
+<script src="../js/donor-profile.js"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="300"
+     height="300"
+     viewBox="0 0 300 300"
+     role="img"
+     aria-label="Default profile avatar">
+
+  <rect width="300" height="300" rx="150" fill="#e9f7ef"/>
+
+  <circle cx="150" cy="112" r="55" fill="#198754"/>
+
+  <path
+    d="M45 280c5-67 46-103 105-103s100 36 105 103"
+    fill="#198754"
+  />
+
+  <circle cx="150" cy="150" r="145"
+          fill="none" stroke="#c9e8d4" stroke-width="10"/>
+
+</svg>

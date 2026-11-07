@@ -27,6 +27,10 @@
             <a href="index.html">Home</a>
             <a href="donate.html">Donate Food</a>
             <a href="find-food.html">Find Food</a>
+            <a href="donor-profile.html" class="nav-profile-link" aria-label="My Profile" title="My Profile">
+                <i class="bi bi-person-circle" aria-hidden="true"></i>
+                <span class="sr-only">My Profile</span>
+            </a>
             <a href="donor-dashboard.html">My Dashboard</a>
             <a href="contact.html">Contact</a>
             <a href="donor-login.html" data-auth-link>Donor Login</a>
@@ -37,19 +41,32 @@
 
 <main class="container dashboard">
     <div class="dashboard-head">
-        <div>
-            <h1>Donor dashboard</h1>
-            <div class="donor-meta">
-                <strong id="donor-name">Loading account</strong>
-                <span id="donor-type"></span>
-                <span id="verification-status"></span>
+        <div class="dashboard-identity">
+            <a class="avatar avatar--sm" href="donor-profile.html"
+               aria-label="Open my profile">
+                <img id="dashboard-avatar" class="avatar-img"
+                     src="../assets/default-avatar.svg"
+                     alt="Your profile photo" width="68" height="68">
+            </a>
+
+            <div>
+                <h1>Donor dashboard</h1>
+                <div class="donor-meta">
+                    <strong id="donor-name">Loading account</strong>
+                    <span id="donor-type"></span>
+                    <span id="verification-status"></span>
+                </div>
             </div>
         </div>
 
         <div class="panel-actions">
+            <a href="donor-profile.html" class="btn btn-outline btn-small">
+                <i class="bi bi-person" aria-hidden="true"></i>
+                My Profile
+            </a>
             <a href="donate.html" class="btn btn-small">
                 <i class="bi bi-plus-lg" aria-hidden="true"></i>
-                New donation
+                Donate Food
             </a>
             <button id="logout-button" class="btn btn-secondary btn-small" type="button">
                 <i class="bi bi-box-arrow-right" aria-hidden="true"></i>
@@ -194,7 +211,7 @@
             </form>
         </section>
 
-        <section class="panel" aria-labelledby="my-donations-heading">
+        <section class="panel" id="donations-panel" aria-labelledby="my-donations-heading">
             <div class="panel-head">
                 <div>
                     <h2 id="my-donations-heading">My donations</h2>
@@ -210,16 +227,16 @@
             <div class="table-wrapper">
                 <table>
                     <colgroup>
-                        <col style="width:30%">
-                        <col style="width:14%">
-                        <col style="width:24%">
-                        <col style="width:16%">
-                        <col style="width:16%">
+                        <col style="width:27%">
+                        <col style="width:12%">
+                        <col style="width:21%">
+                        <col style="width:18%">
+                        <col style="width:22%">
                     </colgroup>
                     <thead>
                         <tr>
                             <th>Food</th>
-                            <th>Quantity</th>
+                            <th>Qty</th>
                             <th>Pickup by</th>
                             <th>Status</th>
                             <th class="cell-actions">Actions</th>

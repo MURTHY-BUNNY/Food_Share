@@ -108,6 +108,11 @@
   /* ---------------- step 1: request a code ---------------------- */
 
   function showCodeStep(result, address) {
+    if (result.delivery === "unavailable") {
+      App.showMessage(messageBox, result.message, "error");
+      return;
+    }
+
     email = address;
 
     codeEmail.textContent = address;
@@ -144,7 +149,14 @@
     }
 
     const address = emailInput.value.trim().toLowerCase();
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const originalLabel = sendButton.innerHTML;
+
+    if (!address || !emailPattern.test(address)) {
+      App.showMessage(messageBox, "Enter a valid email address.", "error");
+      emailInput.focus();
+      return;
+    }
 
     App.clearMessage(messageBox);
     sendButton.disabled = true;
@@ -308,6 +320,12 @@
         method: "POST",
         body: { email: email }
       });
+
+      if (result.delivery === "unavailable") {
+        App.showMessage(messageBox, result.message, "error");
+        resendButton.disabled = false;
+        return;
+      }
 
       otp.clear();
       verifyButton.disabled = true;

@@ -3,7 +3,7 @@
 A complete description of what this project is, how it is built, and what state
 it is in. Written to be handed to another person or an AI assistant as-is.
 
-Last updated: 2026-10-28.
+Last updated: 2026-11-07.
 
 > **Secrets are deliberately excluded.** Database password, JWT secrets and the
 > admin password hash live only in `backend/.env` and are shown here as
@@ -25,7 +25,7 @@ Three kinds of user:
 | Role | How they get in | What they can do |
 | --- | --- | --- |
 | Visitor | no account | browse available food, open a listing, submit a food request, track a donation by id |
-| Donor (Individual or Organization) | email + password, email verified by a 6-digit code | publish, edit, complete and cancel their own donations, see their own statistics |
+| Donor (Individual or Organization) | email + password with a 6-digit email code, or Google sign-in | manage profile, publish, edit, complete and cancel their own donations, see their own statistics |
 | Administrator | single account defined in `.env` | everything above plus status changes, deletion, organization verification, food requests, email-delivery diagnostics |
 
 Architecture is deliberately simple: a **FastAPI + MySQL** JSON API, and a
@@ -37,7 +37,8 @@ page-specific script.
 
 ## 2. How to run it
 
-Two processes are needed: the API and a static file server.
+Two processes are needed: the API and a static file server. See
+[README.md](README.md) for the current Windows setup and deployment notes.
 
 ```powershell
 # 1) API — from the backend folder, using the project virtualenv
@@ -55,12 +56,13 @@ python -m http.server 5500 --bind 127.0.0.1
 - MySQL must be running, and the database named in `DB_NAME` must exist.
   Tables are created and upgraded automatically at startup
   (`initialize_database()` on the FastAPI lifespan hook).
-- CORS allows `http://localhost:<any port>`, `http://127.0.0.1:<any port>` and
-  the `null` origin (opening a file directly from disk).
+- CORS allows local development origins and the `null` origin (opening a file
+  directly from disk). Set `CORS_ALLOWED_ORIGINS` to a comma-separated list of
+  exact deployed frontend origins.
 
 ---
 
-## 3. Configuration reference (`backend/.env`)
+## 3. Configuration reference (`.env` in the repository root)
 
 Read once at startup, so **restart the API after changing it**.
 
@@ -73,6 +75,8 @@ Read once at startup, so **restart the API after changing it**.
 | `ADMIN_PASSWORD_HASH` | yes | PBKDF2 hash of the admin password (`generate_admin_hash.py` creates it) |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` | no | real email delivery; omit to run in demo mode |
 | `SMTP_FROM`, `SMTP_FROM_NAME`, `SMTP_SSL` | no | sender address/name, implicit TLS for port 465 |
+| `GOOGLE_CLIENT_ID` | no | Google Identity Services web client ID |
+| `CORS_ALLOWED_ORIGINS` | no | comma-separated exact frontend origins for deployment |
 | `OTP_SECRET` | no | key for code hashes; falls back to `DONOR_TOKEN_SECRET` |
 | `SIGNUP_CODE_TTL_MINUTES`, `RESET_CODE_TTL_MINUTES`, `OTP_RESEND_SECONDS`, `OTP_MAX_ATTEMPTS` | no | code lifetime, resend cooldown, attempt cap |
 
@@ -86,18 +90,20 @@ Setup of real mail delivery is documented in `backend/EMAIL_SETUP.md`
 ```
 FoodShare/
 ├── PROJECT_HANDOFF.md          this document
-├── .env                        secrets and configuration (not for sharing)
+├── .env                        local secrets (ignored by Git)
+├── .env.example                safe configuration template
 ├── backend/
-│   ├── main.py                 the whole API: config, auth, 31 endpoints
+│   ├── main.py                 the API: config, auth, donor and admin endpoints
 │   ├── database.py             connection helpers, schema creation and upgrade
 │   ├── emailer.py              SMTP delivery + demo mode + delivery diagnostics
 │   ├── requirements.txt        Python dependencies
 │   ├── EMAIL_SETUP.md          how to switch on real email
 │   ├── generate_admin_hash.py  prints a PBKDF2 hash for ADMIN_PASSWORD_HASH
+│   ├── test_email_domain_validation.py focused automated email-domain tests
 │   ├── test_admin_api.py       manual smoke test of the admin endpoints
 │   ├── test_db.py              runs initialize_database() on its own
 │   └── venv/ , .venv/          two virtualenvs (see known issues)
-├── html/                       one file per page (11 pages)
+├── html/                       one file per page, including donor profile
 ├── css/
 │   ├── style.css               the entire design system, 21 numbered sections
 │   └── vendor/                 Bootstrap Icons CSS + font, vendored locally
@@ -120,10 +126,11 @@ input attaches `OtpInput`. Every file's logic is wrapped in
 | `html/track.html` | Donation Details \| FoodShare | api, track | donation detail by `?id=`: quantity, area, deadline, status, donor contact |
 | `html/donate.html` | Donate Food \| FoodShare | api, donate | publishing form for a signed-in donor (with a sign-in prompt when anonymous) and a summary of their account |
 | `html/contact.html` | Contact \| FoodShare | api, contact | contact form that builds a pre-filled email to the address in `CONTACT_EMAIL`, plus help text |
-| `html/donor-register.html` | Create a Donor Account \| FoodShare | api, otp-input, donor-register | two-step signup: account details → 6-digit email code |
-| `html/donor-login.html` | Donor Login \| FoodShare | api, donor-login | donor sign in, link to password reset |
+| `html/donor-register.html` | Create a Donor Account \| FoodShare | api, otp-input, donor-register | Google or email signup; email signup verifies a 6-digit code |
+| `html/donor-login.html` | Donor Login \| FoodShare | api, donor-login | email/password or Google sign in, link to password reset |
 | `html/forgot-password.html` | Reset Password \| FoodShare | api, otp-input, forgot-password | three-step reset: email → code → new password |
 | `html/donor-dashboard.html` | Donor Dashboard \| FoodShare | api, donor-dashboard | publish form + own donations table + four statistics |
+| `html/donor-profile.html` | My Profile \| FoodShare | api, donor-profile | edit profile, manage photo, change password or delete account |
 | `html/admin-login.html` | Admin Sign In \| FoodShare | api, admin-login | administrator sign in |
 | `html/admin.html` | Admin Console \| FoodShare | api, admin | statistics, email-delivery panel, donations, donor accounts, food requests |
 
@@ -280,6 +287,8 @@ works). Auth is `Authorization: Bearer <token>`; a raw token without the
 | POST | `/donors/register` | step 1 of signup: park the details, email a code |
 | POST | `/donors/register/verify` | step 2: exchange the code for an account and a token |
 | POST | `/donors/register/resend` | new signup code for a pending registration |
+| POST | `/donors/google` | verify Google identity or begin donor profile completion |
+| POST | `/donors/google/complete` | finish creating a new Google donor account |
 | POST | `/donors/login` | email + password → donor JWT |
 | POST | `/donors/password/forgot` | email a reset code (same reply whether the account exists or not) |
 | POST | `/donors/password/verify-code` | code → 15-minute reset token |
@@ -291,6 +300,10 @@ works). Auth is `Authorization: Bearer <token>`; a raw token without the
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/donors/me` | the signed-in account |
+| PUT | `/donors/me` | update profile details |
+| POST / DELETE | `/donors/me/photo` | upload or remove profile photo |
+| PUT | `/donors/me/password` | change password |
+| DELETE | `/donors/me` | delete donor account and anonymize donation history |
 | GET | `/donors/me/donations` | their donations, newest first |
 | GET | `/donors/me/dashboard` | `donor` + `summary` counts (total, available, reserved, completed, cancelled, expired) |
 | POST | `/donations` | publish a donation; deadline must be in the future |
@@ -411,8 +424,9 @@ plus any-localhost-port CORS policy for local development.
 
 ## 13. Verification performed
 
-Testing was done with throwaway scripts outside the repository; nothing in this
-section is committed as an automated suite.
+Earlier end-to-end checks used throwaway scripts. The repository also includes
+focused automated tests for common email-domain typos; run them from `backend`
+with `python -m unittest test_email_domain_validation`.
 
 | Area | What was exercised | Result |
 | --- | --- | --- |
@@ -434,9 +448,8 @@ state. Fixed.
 
 Ordered by how much they matter.
 
-1. **No version control.** The folder is not a git repository, so there is no
-   history and no backup. `git init` plus a `.gitignore` covering `venv/`,
-   `.venv/`, `__pycache__/`, `*.db` and `.env` is the first thing to do.
+1. **Test coverage is limited.** Automate the OTP, Google sign-in, profile,
+   donation and admin flows so future changes can be checked reliably.
 2. **Schema drift (section 8).** Bring the live database in line with
    `database.py` — ideally with a small migration script rather than dropping
    data: widen the drifted columns, convert `item_type` to the declared type,
@@ -446,8 +459,8 @@ Ordered by how much they matter.
 3. **No real email yet.** Set the SMTP values (see `backend/EMAIL_SETUP.md`)
    and restart. Until then codes are shown on screen, which is fine for a demo
    and unacceptable for real users.
-4. **Leftover files.** `backend/` contains a zero-byte file named `` ` ``, an
-   empty `database.p`, a stray SQLite artifact `foodshare.db`, and two
+4. **Local-only files.** `backend/` may contain a zero-byte file named `` ` ``,
+   an empty `database.p`, a local SQLite artifact `foodshare.db`, and two
    near-duplicate helpers `generate_admin_hash.py` / `make_admin_hash.py`.
    `registrations` is an unused legacy table. Two virtualenvs exist
    (`venv/` and `.venv/`); keep one.

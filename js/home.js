@@ -30,6 +30,36 @@
     if (hintLabel) hintLabel.textContent = "Open for collection right now";
   }
 
+  function setUnavailableState(message, hint) {
+    if (countLabel) {
+      countLabel.textContent = message;
+    }
+    if (hintLabel) {
+      hintLabel.textContent = hint;
+    }
+  }
+
+  function renderFallback(message) {
+    listings.replaceChildren();
+
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.style.gridColumn = "1 / -1";
+
+    const icon = document.createElement("i");
+    icon.className = "bi bi-inbox";
+    icon.setAttribute("aria-hidden", "true");
+
+    const title = document.createElement("strong");
+    title.textContent = "Could not load donations";
+
+    const hint = document.createElement("span");
+    hint.textContent = message;
+
+    empty.append(icon, title, hint);
+    listings.appendChild(empty);
+  }
+
   function render(donations) {
     listings.replaceChildren();
 
@@ -65,6 +95,15 @@
   }
 
   async function load() {
+    if (!window.App || typeof window.App.request !== "function") {
+      renderFallback("The FoodShare app scripts did not load correctly.");
+      setUnavailableState(
+        "Listing count unavailable",
+        "Refresh the page or start the backend first."
+      );
+      return;
+    }
+
     try {
       const data = await App.request("/donations");
       const donations = App.pickList(data, "donations");
@@ -72,22 +111,15 @@
       setHeroCount(donations.length);
       render(donations);
     } catch (error) {
-      listings.replaceChildren();
+      const message = error && error.message
+        ? error.message
+        : "The FoodShare API is not responding.";
 
-      const failure = App.emptyState(
-        "Could not load donations",
-        error.message
+      renderFallback(message);
+      setUnavailableState(
+        "Listing count unavailable",
+        "The FoodShare API is not responding"
       );
-
-      failure.style.gridColumn = "1 / -1";
-      listings.appendChild(failure);
-
-      if (countLabel) {
-        countLabel.textContent = "Listing count unavailable";
-      }
-      if (hintLabel) {
-        hintLabel.textContent = "The FoodShare API is not responding";
-      }
     }
   }
 

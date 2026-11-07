@@ -10,3 +10,6 @@ __pycache__/
 node_modules/
 .vscode/
 *.log
+*.db
+uploads/
+backend/main_email_validation_backup.py

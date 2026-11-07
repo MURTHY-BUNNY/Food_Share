@@ -98,11 +98,33 @@
         App.statusBadge(donor.verification_status || "Pending")
       );
     }
+
+    renderAvatar(donor);
+  }
+
+  /* Show the donor's uploaded photo in the dashboard header.
+     Profile editing lives on donor-profile.html. */
+  function renderAvatar(data) {
+    const avatar = document.getElementById("dashboard-avatar");
+
+    if (!avatar) return;
+
+    const path = data.profile_photo_url || data.profile_photo_path;
+
+    if (!path) {
+      avatar.src = "../assets/default-avatar.svg";
+      return;
+    }
+
+    avatar.src = /^https?:\/\//i.test(path)
+      ? path
+      : App.API_BASE + (path.startsWith("/") ? path : `/${path}`);
   }
 
   async function loadProfile() {
     const data = await App.request("/donors/me", { auth: "donor" });
-    renderProfile(data.donor || data);
+    donor = data.donor || data;
+    renderProfile(donor);
   }
 
   async function loadStats() {
@@ -448,7 +470,10 @@
     await Promise.allSettled([loadStats(), loadDonations()]);
   }
 
-  /* ---------------- boot --------------------------------------- */
+  /* ---------------- boot ---------------------------------------
+     Profile editing, password change and account deletion live on
+     donor-profile.html so there is one implementation of each.
+     ------------------------------------------------------------- */
 
   async function init() {
     if (!App.getDonorToken()) {

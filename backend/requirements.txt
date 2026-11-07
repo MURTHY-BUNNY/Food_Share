@@ -8,3 +8,5 @@ pwdlib[argon2]
 python-multipart
 pydantic[email]
 slowapi
+google-auth[requests]
+dnspython

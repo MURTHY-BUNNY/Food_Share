@@ -12,14 +12,6 @@ load_dotenv()
 # --------------------------------------------------
 # SCHEMA SYNC
 # --------------------------------------------------
-# CREATE TABLE IF NOT EXISTS never changes a table that already exists, so a
-# database created by an older version of FoodShare keeps its old ENUM values
-# and older columns. Without the sync below, writing a status such as
-# 'Cancelled' fails with "Data truncated for column 'status'".
-#
-# Each entry is applied only when the live column differs from the expected
-# definition. "renames" maps values that no longer exist to their replacement
-# so the ALTER never has to drop a value that is still in use.
 
 ENUM_COLUMNS = [
     {
@@ -52,16 +44,12 @@ COLUMN_ADDITIONS = [
         "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP "
         "ON UPDATE CURRENT_TIMESTAMP",
     ),
-    # A donor account is only created once its email code has been entered, so
-    # every row that exists is verified. The default keeps accounts created by
-    # an older version of FoodShare (which had no verification step) usable.
     ("donor_accounts", "email_verified", "TINYINT(1) NOT NULL DEFAULT 1"),
     ("donor_accounts", "email_verified_at", "DATETIME NULL"),
-    # Set when a password is reset. Tokens issued before that moment are
-    # rejected, so a reset also signs out browsers still using the old password.
     ("donor_accounts", "password_changed_at", "DATETIME NULL"),
+    ("donor_accounts", "google_sub", "VARCHAR(255) NULL"),
+    ("donor_accounts", "profile_photo_path", "VARCHAR(500) NULL"),
 ]
-
 
 def _column_type(cursor, table, column):
     cursor.execute(
@@ -75,7 +63,6 @@ def _column_type(cursor, table, column):
         (table, column),
     )
     row = cursor.fetchone()
-
     return row[0] if row else None
 
 
@@ -104,7 +91,8 @@ def _sync_enum_column(cursor, spec):
 
     cursor.execute(
         f"UPDATE {table} SET {column} = %s "
-        f"WHERE {column} IS NULL OR {column} NOT IN ({','.join(['%s'] * len(values))})",
+        f"WHERE {column} IS NULL OR {column} NOT IN "
+        f"({','.join(['%s'] * len(values))})",
         tuple([spec["default"], *values]),
     )
 
@@ -129,9 +117,29 @@ def sync_schema(connection, cursor):
             )
             changes.append(f"{table}.{column}")
 
+    cursor.execute(
+        """
+        SELECT COUNT(*)
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'donor_accounts'
+          AND INDEX_NAME = 'uq_donor_google_sub'
+        """
+    )
+
+    index_exists = cursor.fetchone()[0] > 0
+
+    if not index_exists:
+        cursor.execute(
+            """
+            ALTER TABLE donor_accounts
+            ADD UNIQUE INDEX uq_donor_google_sub (google_sub)
+            """
+        )
+        changes.append("donor_accounts.google_sub unique index")
+
     for spec in ENUM_COLUMNS:
         changed = _sync_enum_column(cursor, spec)
-
         if changed:
             changes.append(changed)
 
@@ -141,6 +149,10 @@ def sync_schema(connection, cursor):
 
     return changes
 
+
+# --------------------------------------------------
+# DATABASE CONNECTION
+# --------------------------------------------------
 
 def get_db_config():
     """Read MySQL configuration from environment variables."""
@@ -157,6 +169,7 @@ def get_connection():
     """Create and return a MySQL database connection."""
     try:
         connection = mysql.connector.connect(**get_db_config())
+
         if connection.is_connected():
             return connection
 
@@ -185,12 +198,17 @@ def database_cursor(dictionary=True):
         connection.close()
 
 
+# --------------------------------------------------
+# DATABASE INITIALIZATION
+# --------------------------------------------------
+
 def initialize_database():
-    """Create the FoodShare tables if they do not exist."""
+    """Create FoodShare tables and apply safe schema additions."""
+
     statements = [
         """
         CREATE TABLE IF NOT EXISTS donor_accounts (
-            id INT AUTO_INCREMENT PRIMARY KEY,
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
             full_name VARCHAR(150) NOT NULL,
             account_type ENUM(
                 'Individual',
@@ -209,10 +227,11 @@ def initialize_database():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB
         """,
+
         """
         CREATE TABLE IF NOT EXISTS donations (
             id INT AUTO_INCREMENT PRIMARY KEY,
-            donor_id INT NULL,
+            donor_id BIGINT NULL,
             food_name VARCHAR(200) NOT NULL,
             item_type VARCHAR(100) NOT NULL,
             quantity DECIMAL(10, 2) NOT NULL,
@@ -243,6 +262,7 @@ def initialize_database():
                 ON DELETE SET NULL
         ) ENGINE=InnoDB
         """,
+
         """
         CREATE TABLE IF NOT EXISTS food_requests (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -260,6 +280,7 @@ def initialize_database():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB
         """,
+
         """
         CREATE TABLE IF NOT EXISTS admin_accounts (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -268,9 +289,7 @@ def initialize_database():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB
         """,
-        # A sign-up is parked here until the emailed code is entered. The
-        # account itself is created by /donors/register/verify, so an
-        # abandoned sign-up never leaves a usable half-account behind.
+
         """
         CREATE TABLE IF NOT EXISTS pending_registrations (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -289,8 +308,7 @@ def initialize_database():
                 ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB
         """,
-        # Only a keyed hash of the code is stored: a database dump cannot be
-        # turned back into working codes without the application secret.
+
         """
         CREATE TABLE IF NOT EXISTS email_otps (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -304,7 +322,36 @@ def initialize_database():
             INDEX idx_email_otps_lookup (email, purpose, consumed_at),
             INDEX idx_email_otps_expiry (expires_at)
         ) ENGINE=InnoDB
+        """,
+
         """
+        CREATE TABLE IF NOT EXISTS donor_welcome_emails (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            donor_id BIGINT NOT NULL,
+            email VARCHAR(255) NOT NULL,
+
+            status ENUM(
+                'Pending',
+                'Sent',
+                'Failed'
+            ) NOT NULL DEFAULT 'Pending',
+
+            attempts INT NOT NULL DEFAULT 0,
+            sent_at DATETIME NULL,
+            last_error VARCHAR(500) NULL,
+
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                ON UPDATE CURRENT_TIMESTAMP,
+
+            UNIQUE KEY uq_donor_welcome_email_donor (donor_id),
+
+            CONSTRAINT fk_welcome_email_donor
+                FOREIGN KEY (donor_id)
+                REFERENCES donor_accounts(id)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB
+        """,
     ]
 
     connection = get_connection()

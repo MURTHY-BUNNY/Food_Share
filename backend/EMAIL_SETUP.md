@@ -1,9 +1,13 @@
 # Turning on real email delivery
 
 FoodShare sends two kinds of mail: the 6-digit code for a new signup, and the
-6-digit code for a password reset. Until a mail account is configured the API
-runs in **demo mode**: the code is printed in the API console and shown on the
-page, and nothing is emailed. No other part of the flow changes.
+6-digit code for a password reset. The default is **fail closed**: if SMTP is
+not configured, the API refuses to send a verification code instead of returning
+one to the browser. This prevents mailbox-ownership bypasses in production.
+
+A local development-only exception exists, controlled by the `ALLOW_DEMO_EMAIL`
+env var. Set it to `true` only in a trusted local/dev environment if you want
+code values printed in the console and returned as `dev_code` for tests.
 
 Everything below is configuration. The sending code is already in place.
 
@@ -22,6 +26,7 @@ the user and password too.
 | `SMTP_FROM` | Optional. The visible sender. Keep it equal to `SMTP_USER` on Gmail |
 | `SMTP_FROM_NAME` | Optional. Display name, defaults to `FoodShare` |
 | `SMTP_SSL` | Optional. `true` for port 465, otherwise leave it unset |
+| `ALLOW_DEMO_EMAIL` | Optional, dev-only. `true` allows demo codes for local testing; default is `false` |
 
 ### Gmail
 
@@ -85,7 +90,7 @@ The console prints one of:
 
 - `Email delivery: sending through smtp.gmail.com:587 (STARTTLS) as ...` — ready.
 - `WARNING: email delivery is half-configured - ...` — a setting is missing.
-- `NOTICE: SMTP is not configured ...` — still demo mode.
+- `NOTICE: SMTP is not configured ...` — fail-closed mode unless `ALLOW_DEMO_EMAIL=true` is set for local testing.
 
 ## 3. Confirm it in one click
 
@@ -97,7 +102,8 @@ Admin console → **Email delivery**:
   provider accepted the message; check the inbox and the spam folder.
 
 Then do a real signup. The code arrives by email and the demo box no longer
-appears on the page.
+appears on the page. On a safe server, SMTP is required for all signup and reset
+flows; if it is missing, the API returns a clear error instead of issuing a code.
 
 Same thing from the API, if you prefer:
 
@@ -129,5 +135,6 @@ the page shows an error, and the console logs the same text.
 - `backend/.env` holds the database password and the token secrets as well.
   Do not commit it. If a password ever gets pasted into a chat or a document,
   revoke it and create a new one.
-- In demo mode the code is returned to the page as `dev_code` so the flow can be
-  tested. That stops automatically once SMTP is configured.
+- In local development only, `ALLOW_DEMO_EMAIL=true` permits the code to be returned as
+  `dev_code` so the flow can be tested. This is never enabled in production and is
+  ignored when SMTP is properly configured.

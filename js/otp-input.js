@@ -1,215 +1,406 @@
+
 /**
- * One-time code input.
+ * FoodShare - OTP Input Component
  *
- * Turns an empty container into single-digit boxes and keeps them behaving
- * like one field: typing advances, backspace steps back, a pasted code fills
- * every box, and the form submits once all digits are present.
- *
- *   const otp = OtpInput.mount(document.getElementById("verify-code-input"), {
- *     length: 6,
- *     firstInputId: "verify-code",
- *     onComplete: () => form.requestSubmit()
- *   });
+ * Features:
+ * 1. Six-digit OTP input.
+ * 2. Automatically moves to the next input.
+ * 3. Moves backwards using Backspace.
+ * 4. Supports left and right arrow keys.
+ * 5. Supports pasting an entire OTP.
+ * 6. Validates all OTP digits.
+ * 7. Supports clearing OTP inputs.
+ * 8. Supports enabling/disabling inputs.
+ * 9. Supports invalid input styling.
+ * 10. Calls onComplete when all digits are entered.
  */
+
 (function () {
   "use strict";
 
-  const OtpInput = (function () {
-    const NON_DIGIT = /[^0-9]/g;
+  const OtpInput = {
 
-    function mount(container, options) {
-      if (!container) return null;
+    // ================================================
+    // MOUNT OTP INPUT COMPONENT
+    // ================================================
 
-      const settings = options || {};
-      const length = Math.min(8, Math.max(4, Number(settings.length) || 6));
-      const form = container.closest("form");
+    mount(container, options = {}) {
+
+      if (!container) {
+        throw new Error(
+          "OTP input container not found."
+        );
+      }
+
+      const length = Number(options.length) || 6;
+
+      if (!Number.isInteger(length) || length < 1) {
+        throw new Error(
+          "OTP length must be a positive integer."
+        );
+      }
+
       const boxes = [];
 
+      let disabled = false;
+      let invalid = false;
+      let lastCompletedValue = "";
+
       container.classList.add("otp-input");
+
       container.replaceChildren();
-      container.setAttribute("role", "group");
-      container.setAttribute(
-        "aria-label",
-        settings.label || `Verification code, ${length} digits`
-      );
 
-      for (let index = 0; index < length; index += 1) {
-        const box = document.createElement("input");
+      // ==============================================
+      // CHECK OTP COMPLETION
+      // ==============================================
 
-        box.type = "text";
-        box.inputMode = "numeric";
-        box.autocomplete = index === 0 ? "one-time-code" : "off";
-        box.maxLength = 1;
-        box.className = "otp-digit";
-        box.setAttribute("aria-label", `Digit ${index + 1} of ${length}`);
+      function complete() {
 
-        if (index === 0 && settings.id) {
-          box.id = settings.id;
+        const isFilled = boxes.every(box =>
+          /^\d$/.test(box.value)
+        );
+
+        if (!isFilled) {
+          lastCompletedValue = "";
+          return;
         }
 
-        if (settings.describedBy) {
-          box.setAttribute("aria-describedby", settings.describedBy);
+        const code = boxes
+          .map(box => box.value)
+          .join("");
+
+        // Avoid duplicate completion callbacks.
+        if (code === lastCompletedValue) {
+          return;
         }
 
-        boxes.push(box);
-        container.appendChild(box);
-      }
+        lastCompletedValue = code;
 
-      function value() {
-        return boxes.map((box) => box.value).join("");
-      }
-
-      function isComplete() {
-        return value().length === boxes.length;
-      }
-
-      function select(box) {
-        box.focus();
-        if (box.setSelectionRange) {
-          box.setSelectionRange(0, box.value.length);
+        if (typeof options.onComplete === "function") {
+          options.onComplete(code);
         }
       }
 
-      function focus() {
-        select(boxes[0]);
-      }
+      // ==============================================
+      // FILL OTP INPUTS FROM A GIVEN POSITION
+      // ==============================================
 
-      function clear() {
-        boxes.forEach((box) => {
-          box.value = "";
+      function fillFrom(startIndex, text) {
+
+        if (disabled) {
+          return;
+        }
+
+        const digits = String(text)
+          .replace(/\D/g, "")
+          .slice(0, length - startIndex);
+
+        if (!digits) {
+          return;
+        }
+
+        digits.split("").forEach((digit, offset) => {
+
+          const target = boxes[startIndex + offset];
+
+          if (target) {
+            target.value = digit;
+          }
+
         });
 
-        container.classList.remove("is-invalid");
-      }
-
-      function setInvalid(invalid) {
-        container.classList.toggle("is-invalid", Boolean(invalid));
-      }
-
-      function setDisabled(disabled) {
-        boxes.forEach((box) => {
-          box.disabled = Boolean(disabled);
-        });
-      }
-
-      function announceComplete() {
-        if (!isComplete()) return;
+        invalid = false;
 
         container.classList.remove("is-invalid");
 
-        if (typeof settings.onComplete === "function") {
-          settings.onComplete(value());
-        }
+        const nextIndex = Math.min(
+          startIndex + digits.length,
+          length - 1
+        );
+
+        boxes[nextIndex]?.focus();
+
+        complete();
       }
 
-      /* Write digits from a position onwards; used by typing and pasting. */
-      function fill(digits, startIndex) {
-        let cursor = startIndex;
+      // ==============================================
+      // CREATE OTP INPUT BOXES
+      // ==============================================
 
-        for (const digit of digits) {
-          if (cursor >= boxes.length) break;
+      for (let i = 0; i < length; i++) {
 
-          boxes[cursor].value = digit;
-          cursor += 1;
+        const input = document.createElement("input");
+
+        input.type = "text";
+
+        input.inputMode = "numeric";
+
+        input.maxLength = 1;
+
+        input.className = "otp-digit";
+
+        input.autocomplete =
+          i === 0 ? "one-time-code" : "off";
+
+        input.pattern = "[0-9]";
+
+        input.required = true;
+
+        input.setAttribute(
+          "aria-label",
+          `Digit ${i + 1}`
+        );
+
+        if (i === 0 && options.id) {
+          input.id = options.id;
         }
 
-        select(boxes[Math.min(cursor, boxes.length - 1)]);
-      }
+        if (options.describedBy) {
+          input.setAttribute(
+            "aria-describedby",
+            options.describedBy
+          );
+        }
 
-      boxes.forEach((box, index) => {
-        box.addEventListener("input", () => {
-          const typed = box.value.replace(NON_DIGIT, "");
+        // ==========================================
+        // INPUT EVENT
+        // ==========================================
 
-          if (!typed) {
-            box.value = "";
+        input.addEventListener("input", () => {
+
+          if (disabled) {
             return;
           }
 
-          if (typed.length > 1) {
-            /* Some browsers ignore maxlength when text is dropped in. */
-            fill(typed.slice(0, boxes.length - index).split(""), index);
-          } else {
-            box.value = typed;
+          const digits = input.value.replace(/\D/g, "");
 
-            if (index < boxes.length - 1) {
-              select(boxes[index + 1]);
-            }
+          // Handle multiple digits entered into one box.
+          if (digits.length > 1) {
+            fillFrom(i, digits);
+            return;
           }
 
-          announceComplete();
+          input.value = digits;
+
+          invalid = false;
+
+          container.classList.remove("is-invalid");
+
+          if (input.value && boxes[i + 1]) {
+            boxes[i + 1].focus();
+          }
+
+          complete();
+
         });
 
-        box.addEventListener("keydown", (event) => {
-          if (event.key === "Backspace" && !box.value) {
-            event.preventDefault();
+        // ==========================================
+        // KEYBOARD NAVIGATION
+        // ==========================================
 
-            if (index > 0) {
-              boxes[index - 1].value = "";
-              select(boxes[index - 1]);
-            }
+        input.addEventListener("keydown", event => {
 
+          if (disabled) {
             return;
           }
 
-          if (event.key === "ArrowLeft" && index > 0) {
-            event.preventDefault();
-            select(boxes[index - 1]);
-            return;
+          // Backspace: move to previous box.
+          if (
+            event.key === "Backspace" &&
+            !input.value &&
+            boxes[i - 1]
+          ) {
+            boxes[i - 1].focus();
           }
 
-          if (event.key === "ArrowRight" && index < boxes.length - 1) {
+          // Left arrow.
+          if (
+            event.key === "ArrowLeft" &&
+            boxes[i - 1]
+          ) {
             event.preventDefault();
-            select(boxes[index + 1]);
-            return;
+            boxes[i - 1].focus();
           }
 
-          if (event.key === "Enter" && form) {
+          // Right arrow.
+          if (
+            event.key === "ArrowRight" &&
+            boxes[i + 1]
+          ) {
             event.preventDefault();
-
-            if (!isComplete()) return;
-
-            if (typeof form.requestSubmit === "function") {
-              form.requestSubmit();
-            } else {
-              form.submit();
-            }
+            boxes[i + 1].focus();
           }
+
+          // Allow only numeric characters.
+          if (
+            event.key.length === 1 &&
+            !/[0-9]/.test(event.key)
+          ) {
+            event.preventDefault();
+          }
+
         });
 
-        box.addEventListener("paste", (event) => {
-          const clipboard = event.clipboardData || window.clipboardData;
-          const pasted = clipboard
-            ? clipboard.getData("text").replace(NON_DIGIT, "")
-            : "";
+        // ==========================================
+        // BACKSPACE INPUT HANDLING
+        // ==========================================
+
+        input.addEventListener("keydown", event => {
+
+          if (
+            event.key === "Backspace" &&
+            input.value
+          ) {
+            input.value = "";
+
+            lastCompletedValue = "";
+
+            invalid = false;
+
+            container.classList.remove("is-invalid");
+          }
+
+        });
+
+        // ==========================================
+        // PASTE OTP
+        // ==========================================
+
+        input.addEventListener("paste", event => {
+
+          if (disabled) {
+            return;
+          }
 
           event.preventDefault();
 
-          if (!pasted) return;
+          const pasted = event.clipboardData
+            ? event.clipboardData.getData("text")
+            : "";
 
-          fill(pasted.slice(0, boxes.length - index).split(""), index);
-          announceComplete();
-        });
+          const digits = pasted.replace(/\D/g, "");
 
-        box.addEventListener("focus", () => {
-          if (box.setSelectionRange) {
-            box.setSelectionRange(0, box.value.length);
+          if (!digits) {
+            return;
           }
+
+          // If the full OTP is pasted, start at box zero.
+          const startIndex =
+            digits.length >= length ? 0 : i;
+
+          fillFrom(startIndex, digits);
+
         });
-      });
+
+        // ==========================================
+        // APPEND INPUT TO CONTAINER
+        // ==========================================
+
+        boxes.push(input);
+
+        container.appendChild(input);
+
+      }
+
+      // ==============================================
+      // PUBLIC OTP METHODS
+      // ==============================================
 
       return {
-        value,
-        clear,
-        fill,
-        focus,
-        isComplete,
-        setDisabled,
-        setInvalid
+
+        // Get complete OTP string.
+        value: () => {
+
+          return boxes
+            .map(box => box.value)
+            .join("");
+
+        },
+
+        // Check whether every box has one digit.
+        isComplete: () => {
+
+          return boxes.every(box =>
+            /^\d$/.test(box.value)
+          );
+
+        },
+
+        // Clear all OTP boxes.
+        clear: () => {
+
+          boxes.forEach(box => {
+            box.value = "";
+          });
+
+          lastCompletedValue = "";
+
+          invalid = false;
+
+          container.classList.remove("is-invalid");
+
+          if (!disabled) {
+            boxes[0]?.focus();
+          }
+
+        },
+
+        // Focus the first OTP box.
+        focus: () => {
+
+          if (!disabled) {
+            boxes[0]?.focus();
+          }
+
+        },
+
+        // Mark OTP as invalid or valid.
+        setInvalid: value => {
+
+          invalid = Boolean(value);
+
+          container.classList.toggle(
+            "is-invalid",
+            invalid
+          );
+
+        },
+
+        // Enable or disable all OTP boxes.
+        setDisabled: value => {
+
+          disabled = Boolean(value);
+
+          boxes.forEach(box => {
+            box.disabled = disabled;
+          });
+
+        },
+
+        // Return all OTP input elements.
+        getInputs: () => {
+
+          return [...boxes];
+
+        },
+
+        // Return the current OTP length.
+        getLength: () => {
+
+          return length;
+
+        }
+
       };
+
     }
 
-    return { mount };
-  })();
+  };
+
+  // ================================================
+  // MAKE COMPONENT AVAILABLE GLOBALLY
+  // ================================================
 
   window.OtpInput = OtpInput;
+
 })();

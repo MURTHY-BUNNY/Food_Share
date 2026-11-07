@@ -3,6 +3,8 @@ import os
 import hashlib
 import hmac
 import secrets
+import dns.resolver
+import dns.exception
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Literal
@@ -10,7 +12,17 @@ from pathlib import Path
 import jwt
 import mysql.connector
 from dotenv import load_dotenv
-from fastapi import FastAPI, Depends, HTTPException, Header, Query
+from fastapi import (
+    FastAPI,
+    Depends,
+    HTTPException,
+    Header,
+    Query,
+    UploadFile,
+    File,
+)
+from fastapi.staticfiles import StaticFiles
+import uuid
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import (
     OAuth2PasswordRequestForm,
@@ -26,11 +38,226 @@ from emailer import (
     delivery_mode,
     send_otp,
     send_test,
+    send_welcome_email,
     status as mail_status,
 )
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
+# --------------------------------------------------
+# DONOR PROFILE PHOTO STORAGE
+# --------------------------------------------------
+
+UPLOAD_DIR = BASE_DIR / "uploads" / "donor-photos"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+ALLOWED_PHOTO_TYPES = {
+    "image/jpeg": ".jpg",
+    # Some browsers still send the non-standard aliases for JPEG.
+    "image/jpg": ".jpg",
+    "image/pjpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
+
+MAX_PHOTO_SIZE = 2 * 1024 * 1024  # 2 MB
+
+
+def photo_file(relative_path):
+    """Resolve a stored photo path, refusing anything outside the upload folder."""
+    if not relative_path:
+        return None
+
+    candidate = (BASE_DIR / relative_path.lstrip("/")).resolve()
+
+    if candidate.parent != UPLOAD_DIR.resolve():
+        return None
+
+    return candidate
+
+
+def delete_photo_file(relative_path) -> None:
+    """Delete a stored photo from disk, ignoring missing or unsafe paths."""
+    target = photo_file(relative_path)
+
+    if not target or not target.is_file():
+        return
+
+    try:
+        target.unlink()
+    except OSError as exc:
+        print(f"Could not remove profile photo: {type(exc).__name__}")
+
+
+# --------------------------------------------------
+# EMAIL DOMAIN VALIDATION
+# --------------------------------------------------
+
+DNS_TIMEOUT_SECONDS = 3
+
+DEFAULT_DISPOSABLE_DOMAINS = {
+    "mailinator.com",
+    "tempmail.com",
+    "10minutemail.com",
+    "guerrillamail.com",
+    "yopmail.com",
+    "throwawaymail.com",
+}
+
+COMMON_EMAIL_DOMAINS = {
+    "gmail.com",
+    "googlemail.com",
+    "yahoo.com",
+    "yahoo.co.in",
+    "outlook.com",
+    "hotmail.com",
+    "live.com",
+    "icloud.com",
+    "me.com",
+    "protonmail.com",
+    "proton.me",
+    "rediffmail.com",
+    "aol.com",
+}
+
+
+def is_single_character_typo(value: str, candidate: str) -> bool:
+    if abs(len(value) - len(candidate)) > 1:
+        return False
+
+    if len(value) == len(candidate):
+        mismatches = [
+            index
+            for index, (left, right) in enumerate(zip(value, candidate))
+            if left != right
+        ]
+        if len(mismatches) == 1:
+            return True
+        if len(mismatches) == 2:
+            first, second = mismatches
+            return (
+                second == first + 1
+                and value[first] == candidate[second]
+                and value[second] == candidate[first]
+            )
+        return False
+
+    shorter, longer = sorted((value, candidate), key=len)
+    short_index = 0
+    long_index = 0
+    skipped_character = False
+
+    while short_index < len(shorter) and long_index < len(longer):
+        if shorter[short_index] == longer[long_index]:
+            short_index += 1
+            long_index += 1
+        elif skipped_character:
+            return False
+        else:
+            skipped_character = True
+            long_index += 1
+
+    return True
+
+
+def validate_email_domain(email: str) -> bool:
+    email = email.strip().lower()
+    domain = email.rsplit("@", 1)[-1]
+
+    suggestions = sorted(
+        (
+            candidate
+            for candidate in COMMON_EMAIL_DOMAINS
+            if candidate != domain
+            and is_single_character_typo(domain, candidate)
+        ),
+        key=len,
+    )
+    if suggestions:
+        local_part = email.rsplit("@", 1)[0]
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Invalid email address. Did you mean "
+                f"{local_part}@{suggestions[0]}? Correct it before requesting a verification code."
+            ),
+        )
+
+    configured_domains = {
+        item.strip().lower()
+        for item in os.getenv(
+            "DISPOSABLE_EMAIL_DOMAINS", ""
+        ).split(",")
+        if item.strip()
+    }
+
+    blocked_domains = (
+        DEFAULT_DISPOSABLE_DOMAINS | configured_domains
+    )
+
+    if domain in blocked_domains:
+        raise HTTPException(
+            status_code=422,
+            detail="Disposable email addresses are not allowed."
+        )
+
+    resolver = dns.resolver.Resolver()
+    resolver.timeout = DNS_TIMEOUT_SECONDS
+    resolver.lifetime = DNS_TIMEOUT_SECONDS
+
+    try:
+        answers = resolver.resolve(domain, "MX")
+
+        if len(answers) > 0:
+            return True
+
+    except dns.resolver.NoAnswer:
+        # Try implicit MX fallback below.
+        pass
+
+    except dns.resolver.NXDOMAIN:
+        raise HTTPException(
+            status_code=422,
+            detail="Wrong email ID entered. Please check the domain."
+        )
+
+    except (
+        dns.exception.Timeout,
+        dns.resolver.NoNameservers
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail="Email domain verification is temporarily unavailable. Please try again."
+        )
+
+    # RFC implicit MX fallback: accept a domain with A or AAAA.
+    for record_type in ("A", "AAAA"):
+        try:
+            answers = resolver.resolve(domain, record_type)
+
+            if len(answers) > 0:
+                return True
+
+        except (
+            dns.resolver.NoAnswer,
+            dns.resolver.NXDOMAIN
+        ):
+            continue
+
+        except (
+            dns.exception.Timeout,
+            dns.resolver.NoNameservers
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail="Email domain verification is temporarily unavailable. Please try again."
+            )
+
+    raise HTTPException(
+        status_code=422,
+        detail="Wrong email ID entered. This domain cannot receive email."
+    )
+
 
 # --------------------------------------------------
 # APPLICATION CONFIGURATION
@@ -59,11 +286,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.mount(
+    "/uploads",
+    StaticFiles(directory=str(BASE_DIR / "uploads")),
+    name="uploads",
+)
+
 # The static frontend is served by Live Server / http.server, which can pick
 # any local port, and may also be opened straight from disk (origin "null").
+configured_origins = [
+    origin.strip()
+    for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["null"],
+    allow_origins=["null", *configured_origins],
     allow_origin_regex=r"^(https?://(localhost|127\.0\.0\.1)(:\d+)?)$",
     allow_credentials=False,
     allow_methods=["*"],
@@ -74,6 +312,8 @@ DONOR_TOKEN_SECRET = os.getenv("DONOR_TOKEN_SECRET", "")
 ADMIN_TOKEN_SECRET = os.getenv("ADMIN_TOKEN_SECRET", "")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "")
 ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH", "")
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+GOOGLE_ONBOARDING_TTL_MINUTES = 10
 
 if not DONOR_TOKEN_SECRET or not ADMIN_TOKEN_SECRET:
     print(
@@ -96,6 +336,7 @@ def _env_int(name: str, default: int) -> int:
 # Codes are stored as a keyed digest, so a database dump cannot be turned back
 # into working codes without this secret.
 OTP_SECRET = os.getenv("OTP_SECRET", "") or DONOR_TOKEN_SECRET
+ALLOW_DEMO_EMAIL = os.getenv("ALLOW_DEMO_EMAIL", "").strip().lower() in {"1", "true", "yes", "on"}
 
 SIGNUP_CODE_TTL_MINUTES = _env_int("SIGNUP_CODE_TTL_MINUTES", 15)
 RESET_CODE_TTL_MINUTES = _env_int("RESET_CODE_TTL_MINUTES", 15)
@@ -164,6 +405,110 @@ def execute_query(sql, params=()):
     finally:
         cursor.close()
         connection.close()
+
+
+def deliver_welcome_email(
+    donor_id,
+    email,
+    full_name,
+    account_type,
+    verification_status,
+):
+    """Create one tracking record and attempt a new donor's welcome email.
+
+    This function deliberately catches its own errors so email or tracking
+    failures cannot undo an already committed donor account.
+    """
+    try:
+        # INSERT IGNORE returns rowcount=1 only for a newly inserted record;
+        # an existing donor record is left untouched and is not emailed again.
+        _, inserted = execute_query(
+            """
+            INSERT IGNORE INTO donor_welcome_emails
+                (donor_id, email, status)
+            VALUES (%s, %s, 'Pending')
+            """,
+            (donor_id, email),
+        )
+
+        if inserted != 1:
+            print(
+                f"Welcome email skipped for donor ID {donor_id}: "
+                "a tracking record already exists."
+            )
+            return
+
+        # Count this attempt before contacting the SMTP server.
+        execute_query(
+            """
+            UPDATE donor_welcome_emails
+            SET attempts = attempts + 1, last_error = NULL
+            WHERE donor_id = %s
+            """,
+            (donor_id,),
+        )
+
+        try:
+            delivery_result = send_welcome_email(
+                to_email=email,
+                recipient_name=full_name,
+                account_type=account_type,
+                verification_status=verification_status,
+            )
+
+            if delivery_result != "smtp":
+                # Demo mode prints OTPs for development; it is not email delivery.
+                execute_query(
+                    """
+                    UPDATE donor_welcome_emails
+                    SET status = 'Failed', last_error = %s
+                    WHERE donor_id = %s
+                    """,
+                    ("SMTPNotConfigured", donor_id),
+                )
+                print(
+                    f"Welcome email not sent for donor ID {donor_id}: "
+                    "SMTP is not configured."
+                )
+                return
+
+            execute_query(
+                """
+                UPDATE donor_welcome_emails
+                SET status = 'Sent', sent_at = NOW(), last_error = NULL
+                WHERE donor_id = %s
+                """,
+                (donor_id,),
+            )
+            print(f"Welcome email accepted by SMTP for donor ID {donor_id}.")
+
+        except Exception as exc:
+            error_name = type(exc).__name__[:500]
+            try:
+                execute_query(
+                    """
+                    UPDATE donor_welcome_emails
+                    SET status = 'Failed', last_error = %s
+                    WHERE donor_id = %s
+                    """,
+                    (error_name, donor_id),
+                )
+            except Exception as tracking_exc:
+                print(
+                    f"WARNING: Could not update welcome-email status for "
+                    f"donor ID {donor_id}: {type(tracking_exc).__name__}"
+                )
+
+            print(
+                f"WARNING: Welcome email failed for donor ID {donor_id}: "
+                f"{error_name}"
+            )
+
+    except Exception as exc:
+        print(
+            f"WARNING: Welcome-email tracking failed for donor ID "
+            f"{donor_id}: {type(exc).__name__}"
+        )
 
 
 def expire_stale_donations():
@@ -315,32 +660,6 @@ def get_bearer_token(
 
     return credentials.credentials.strip()
 
-    """Read the Authorization header and return the JWT token."""
-    if not authorization or not authorization.strip():
-        raise HTTPException(
-            status_code=401,
-            detail="Authorization token required.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    value = authorization.strip()
-
-    # Standard format is: Authorization: Bearer <token>.
-    # Also accept a raw token for compatibility with the existing Swagger field.
-    if value.lower().startswith("bearer "):
-        token = value[7:].strip()
-    else:
-        token = value
-
-    if not token:
-        raise HTTPException(
-            status_code=401,
-            detail="Authorization token required.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    return token
-
 
 def get_current_donor(token: str = Depends(get_bearer_token)):
     payload = decode_token(token, DONOR_TOKEN_SECRET, "donor")
@@ -355,7 +674,7 @@ def get_current_donor(token: str = Depends(get_bearer_token)):
         SELECT id, full_name, account_type, organization_name,
                email, phone, location, verification_status,
                email_verified, email_verified_at, password_changed_at,
-               created_at
+               created_at, profile_photo_path
         FROM donor_accounts
         WHERE id = %s
         """,
@@ -548,7 +867,26 @@ def send_code_email(
 ) -> str:
     """Hand the code to the mailer and return the delivery mode used."""
     try:
-        return send_otp(email, code, purpose, recipient_name, ttl_minutes)
+        delivery = send_otp(email, code, purpose, recipient_name, ttl_minutes)
+
+        if delivery == "demo" and not ALLOW_DEMO_EMAIL:
+            execute_query(
+                """
+                DELETE FROM email_otps
+                WHERE email = %s AND purpose = %s AND consumed_at IS NULL
+                """,
+                (email, purpose),
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Email delivery is not configured on this server. "
+                    "Set SMTP_HOST, SMTP_USER and SMTP_PASSWORD in backend/.env "
+                    "before continuing."
+                ),
+            )
+
+        return delivery
     except EmailDeliveryError:
         # No message went out, so drop the code: the donor can retry at once
         # instead of waiting out the resend cooldown for a code they never saw.
@@ -581,8 +919,8 @@ def code_issued_response(
         "resend_after_seconds": OTP_RESEND_SECONDS,
     }
 
-    if mode == "demo":
-        # No SMTP configured: without the code here the flow cannot continue.
+    if mode == "demo" and ALLOW_DEMO_EMAIL:
+        # Only expose demo codes in explicitly enabled local development.
         payload["dev_code"] = code
 
     return payload
@@ -605,6 +943,18 @@ def create_reset_token(email: str) -> str:
 # REQUEST MODELS
 # --------------------------------------------------
 
+class DonorProfileUpdate(BaseModel):
+    full_name: str = Field(min_length=2, max_length=150)
+    phone: str = Field(min_length=7, max_length=30)
+    location: str = Field(min_length=2, max_length=255)
+    organization_name: Optional[str] = Field(default=None, max_length=200)
+
+
+class DonorPasswordChange(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
 class DonorRegister(BaseModel):
     full_name: str = Field(min_length=2, max_length=150)
     account_type: Literal["Individual", "Organization"] = "Individual"
@@ -613,6 +963,18 @@ class DonorRegister(BaseModel):
     phone: str = Field(min_length=7, max_length=30)
     location: str = Field(min_length=2, max_length=255)
     password: str = Field(min_length=8, max_length=128)
+
+
+class GoogleDonorStart(BaseModel):
+    credential: str = Field(min_length=20, max_length=10000)
+
+
+class GoogleDonorComplete(BaseModel):
+    onboarding_token: str = Field(min_length=20, max_length=5000)
+    account_type: Literal["Individual", "Organization"] = "Individual"
+    organization_name: Optional[str] = Field(default=None, max_length=200)
+    phone: str = Field(min_length=7, max_length=30)
+    location: str = Field(min_length=2, max_length=255)
 
 
 class DonationCreate(BaseModel):
@@ -731,6 +1093,7 @@ def register_donor(data: DonorRegister):
     an unverified address never occupies an email with someone else's password.
     """
     email = str(data.email).strip().lower()
+    validate_email_domain(email)
 
     existing = fetch_one(
         "SELECT id FROM donor_accounts WHERE email = %s",
@@ -864,6 +1227,14 @@ def verify_donor_email(data: EmailVerification):
         (email,),
     )
 
+    deliver_welcome_email(
+        donor_id=donor_id,
+        email=email,
+        full_name=pending["full_name"],
+        account_type=pending["account_type"],
+        verification_status=verification,
+    )
+
     return {
         "message": (
             "Email verified. An administrator still has to verify this "
@@ -891,6 +1262,7 @@ def verify_donor_email(data: EmailVerification):
 def resend_registration_code(data: EmailRequest):
     """Send a new sign-up code for a pending registration."""
     email = str(data.email).strip().lower()
+    validate_email_domain(email)
 
     pending = fetch_one(
         "SELECT full_name FROM pending_registrations WHERE email = %s",
@@ -919,6 +1291,236 @@ def resend_registration_code(data: EmailRequest):
         code,
         SIGNUP_CODE_TTL_MINUTES,
     )
+
+
+@app.post("/donors/google")
+def google_donor_start(data: GoogleDonorStart):
+    """Verify a Google ID token and either sign in or begin profile completion."""
+    if not DONOR_TOKEN_SECRET:
+        raise HTTPException(
+            status_code=500,
+            detail="Donor authentication secret is not configured.",
+        )
+
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(
+            status_code=503,
+            detail="Google sign-in is not configured on the server.",
+        )
+
+    try:
+        from google.oauth2 import id_token
+        from google.auth.transport import requests as google_requests
+
+        claims = id_token.verify_oauth2_token(
+            data.credential,
+            google_requests.Request(),
+            GOOGLE_CLIENT_ID,
+        )
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Google authentication dependency is missing. Install google-auth[requests].",
+        )
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Google credential is invalid or expired.")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Google authentication could not be verified.")
+
+    google_sub = str(claims.get("sub") or "").strip()
+    email = str(claims.get("email") or "").strip().lower()
+    full_name = str(claims.get("name") or "").strip()
+    email_verified = claims.get("email_verified") is True
+
+    if not google_sub or not email or not email_verified:
+        raise HTTPException(
+            status_code=401,
+            detail="Google must provide a verified email address.",
+        )
+
+    donor = fetch_one(
+        """SELECT id, full_name, account_type, organization_name, email,
+                  phone, location, verification_status, email_verified
+           FROM donor_accounts WHERE google_sub = %s""",
+        (google_sub,),
+    )
+
+    # Returning Google-linked donor: issue the normal FoodShare session.
+    if donor:
+        return {
+            "message": "Google sign-in successful.",
+            "profile_required": False,
+            "access_token": create_token(str(donor["id"]), DONOR_TOKEN_SECRET, "donor"),
+            "token_type": "bearer",
+            "expires_in": 43200,
+            "donor": donor,
+        }
+
+    # Link to an existing account only when that FoodShare email was already
+    # verified through the normal OTP flow. This prevents account takeover.
+    donor = fetch_one(
+        """SELECT id, full_name, account_type, organization_name, email,
+                  phone, location, verification_status, email_verified, google_sub
+           FROM donor_accounts WHERE email = %s""",
+        (email,),
+    )
+
+    if donor:
+        if not bool(donor.get("email_verified")):
+            raise HTTPException(
+                status_code=409,
+                detail="An account exists with this email but it is not verified. Sign in with email and verify it before linking Google.",
+            )
+        if donor.get("google_sub") and donor["google_sub"] != google_sub:
+            raise HTTPException(
+                status_code=409,
+                detail="This FoodShare account is already linked to another Google account.",
+            )
+        execute_query(
+            "UPDATE donor_accounts SET google_sub = %s WHERE id = %s",
+            (google_sub, donor["id"]),
+        )
+        return {
+            "message": "Google account linked. Sign-in successful.",
+            "profile_required": False,
+            "access_token": create_token(str(donor["id"]), DONOR_TOKEN_SECRET, "donor"),
+            "token_type": "bearer",
+            "expires_in": 43200,
+            "donor": donor,
+        }
+
+    # New Google identity: return a short-lived signed onboarding token. The
+    # browser cannot choose or alter the verified Google name/email in it.
+    now = datetime.now(timezone.utc)
+    onboarding_token = jwt.encode(
+        {
+            "sub": google_sub,
+            "email": email,
+            "name": full_name[:150],
+            "type": "google_onboarding",
+            "iat": now,
+            "exp": now + timedelta(minutes=GOOGLE_ONBOARDING_TTL_MINUTES),
+        },
+        DONOR_TOKEN_SECRET,
+        algorithm="HS256",
+    )
+
+    return {
+        "message": "Google verified. Complete your FoodShare profile to continue.",
+        "profile_required": True,
+        "onboarding_token": onboarding_token,
+        "profile": {"full_name": full_name[:150], "email": email},
+        "expires_in_minutes": GOOGLE_ONBOARDING_TTL_MINUTES,
+    }
+
+
+@app.post("/donors/google/complete", status_code=201)
+def google_donor_complete(data: GoogleDonorComplete):
+    """Create a new donor account after Google identity verification."""
+    try:
+        payload = jwt.decode(
+            data.onboarding_token,
+            DONOR_TOKEN_SECRET,
+            algorithms=["HS256"],
+        )
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Google registration expired. Please start again.")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid Google registration session.")
+
+    if payload.get("type") != "google_onboarding":
+        raise HTTPException(status_code=401, detail="Invalid Google registration session.")
+
+    google_sub = str(payload.get("sub") or "").strip()
+    email = str(payload.get("email") or "").strip().lower()
+    full_name = str(payload.get("name") or "").strip() or email.split("@", 1)[0]
+    phone = data.phone.strip()
+    location = data.location.strip()
+    organization_name = (data.organization_name or "").strip() or None
+
+    if len(phone) < 7:
+        raise HTTPException(status_code=422, detail="Enter a valid phone number.")
+    if len(location) < 2:
+        raise HTTPException(status_code=422, detail="Enter your location.")
+
+    if data.account_type == "Organization" and not organization_name:
+        raise HTTPException(status_code=422, detail="Organization name is required.")
+
+    if not google_sub or not email:
+        raise HTTPException(status_code=401, detail="Google registration session is incomplete.")
+
+    # A token can only be used to create one account. Check both identity and
+    # email again to handle repeated submissions and concurrent requests.
+    existing = fetch_one(
+        "SELECT id FROM donor_accounts WHERE google_sub = %s OR email = %s LIMIT 1",
+        (google_sub, email),
+    )
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail="An account with this Google identity or email already exists. Please sign in.",
+        )
+
+    verification = "Pending" if data.account_type == "Organization" else "Verified"
+    random_password = secrets.token_urlsafe(48)
+
+    try:
+        donor_id, _ = execute_query(
+            """INSERT INTO donor_accounts
+               (full_name, account_type, organization_name, email, phone,
+                location, password_hash, verification_status, email_verified,
+                email_verified_at, google_sub)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1, NOW(), %s)""",
+            (
+                full_name,
+                data.account_type,
+                organization_name,
+                email,
+                phone,
+                location,
+                hash_password(random_password),
+                verification,
+                google_sub,
+            ),
+        )
+    except mysql.connector.IntegrityError:
+        raise HTTPException(
+            status_code=409,
+            detail="An account with this email or Google identity already exists. Please sign in.",
+        )
+
+    donor = {
+        "id": donor_id,
+        "full_name": full_name,
+        "email": email,
+        "phone": phone,
+        "location": location,
+        "account_type": data.account_type,
+        "organization_name": organization_name,
+        "verification_status": verification,
+        "email_verified": True,
+    }
+
+    deliver_welcome_email(
+        donor_id=donor_id,
+        email=email,
+        full_name=full_name,
+        account_type=data.account_type,
+        verification_status=verification,
+    )
+
+    return {
+        "message": (
+            "FoodShare account created. Organization verification is pending."
+            if data.account_type == "Organization"
+            else "FoodShare account created successfully."
+        ),
+        "profile_required": False,
+        "access_token": create_token(str(donor_id), DONOR_TOKEN_SECRET, "donor"),
+        "token_type": "bearer",
+        "expires_in": 43200,
+        "donor": donor,
+    }
 
 
 @app.post("/donors/login")
@@ -977,12 +1579,21 @@ def forgot_donor_password(data: EmailRequest):
     this endpoint cannot be used to discover who has an account.
     """
     email = str(data.email).strip().lower()
+    validate_email_domain(email)
 
     purge_stale_otp_data()
 
     message = (
         f"If an account exists for {email}, a 6-digit reset code is on its way."
     )
+
+    if delivery_mode() != "smtp":
+        return {
+            "message": "Password reset email is temporarily unavailable. Please try again later.",
+            "verification_required": False,
+            "email": email,
+            "delivery": "unavailable",
+        }
 
     donor = fetch_one(
         "SELECT id, full_name FROM donor_accounts WHERE email = %s",
@@ -1076,9 +1687,276 @@ def reset_donor_password(data: PasswordReset):
     }
 
 
+@app.put("/donors/me/password")
+def change_my_password(
+    data: DonorPasswordChange,
+    donor=Depends(get_current_donor),
+):
+    """Change the authenticated donor's password after verifying the current one."""
+    account = fetch_one(
+        "SELECT password_hash FROM donor_accounts WHERE id = %s",
+        (donor["id"],),
+    )
+    if not account or not verify_password(data.current_password, account["password_hash"]):
+        raise HTTPException(status_code=403, detail="Current password is incorrect.")
+
+    if verify_password(data.new_password, account["password_hash"]):
+        raise HTTPException(
+            status_code=422,
+            detail="Choose a new password different from your current password.",
+        )
+
+    execute_query(
+        "UPDATE donor_accounts SET password_hash = %s, password_changed_at = NOW() WHERE id = %s",
+        (hash_password(data.new_password), donor["id"]),
+    )
+
+    # Issue a fresh token so this browser stays signed in; older sessions are
+    # rejected by get_current_donor using password_changed_at.
+    access_token = create_token(str(donor["id"]), DONOR_TOKEN_SECRET, "donor")
+    return {
+        "message": "Password changed successfully.",
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": 43200,
+    }
+
+
+@app.post("/donors/me/photo")
+async def upload_my_profile_photo(
+    photo: UploadFile = File(...),
+    donor=Depends(get_current_donor),
+):
+    """Upload or replace the authenticated donor's profile photo."""
+    extension = ALLOWED_PHOTO_TYPES.get(photo.content_type)
+
+    if not extension:
+        raise HTTPException(
+            status_code=422,
+            detail="Only JPG, PNG and WEBP images are allowed.",
+        )
+
+    contents = await photo.read(MAX_PHOTO_SIZE + 1)
+
+    if not contents:
+        raise HTTPException(status_code=422, detail="The selected image is empty.")
+
+    if len(contents) > MAX_PHOTO_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail="Profile photo must be smaller than 2 MB.",
+        )
+
+    valid_image = (
+        (extension == ".jpg" and contents.startswith(b"\xff\xd8\xff"))
+        or (extension == ".png" and contents.startswith(b"\x89PNG\r\n\x1a\n"))
+        or (
+            extension == ".webp"
+            and contents.startswith(b"RIFF")
+            and contents[8:12] == b"WEBP"
+        )
+    )
+
+    if not valid_image:
+        raise HTTPException(
+            status_code=422,
+            detail="The uploaded file is not a valid image.",
+        )
+
+    filename = f"donor_{donor['id']}_{uuid.uuid4().hex}{extension}"
+    destination = UPLOAD_DIR / filename
+    old_path = donor.get("profile_photo_path")
+
+    try:
+        destination.write_bytes(contents)
+        relative_path = f"/uploads/donor-photos/{filename}"
+
+        execute_query(
+            """
+            UPDATE donor_accounts
+            SET profile_photo_path = %s
+            WHERE id = %s
+            """,
+            (relative_path, donor["id"]),
+        )
+
+        # Remove the photo this upload replaced.
+        delete_photo_file(old_path)
+
+        return {
+            "message": "Profile photo uploaded successfully.",
+            "profile_photo_url": relative_path,
+        }
+
+    except HTTPException:
+        if destination.exists():
+            destination.unlink()
+        raise
+    except Exception as exc:
+        if destination.exists():
+            destination.unlink()
+        print(f"Profile photo upload failed: {type(exc).__name__}")
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to save your profile photo.",
+        )
+    finally:
+        await photo.close()
+
+
+@app.delete("/donors/me/photo")
+def remove_my_profile_photo(donor=Depends(get_current_donor)):
+    """Remove the authenticated donor's profile photo."""
+    old_path = donor.get("profile_photo_path")
+
+    execute_query(
+        """
+        UPDATE donor_accounts
+        SET profile_photo_path = NULL
+        WHERE id = %s
+        """,
+        (donor["id"],),
+    )
+
+    if old_path:
+        old_file = (BASE_DIR / old_path.lstrip("/")).resolve()
+        if old_file.parent == UPLOAD_DIR.resolve() and old_file.is_file():
+            old_file.unlink()
+
+    return {
+        "message": "Profile photo removed successfully.",
+        "profile_photo_url": None,
+    }
+
+
 @app.get("/donors/me")
 def get_my_profile(donor=Depends(get_current_donor)):
+    photo_path = donor.get("profile_photo_path")
+    donor["profile_photo_url"] = photo_path if photo_path else None
     return {"donor": donor}
+
+
+@app.put("/donors/me")
+def update_my_profile(
+    data: DonorProfileUpdate,
+    donor=Depends(get_current_donor),
+):
+    """Update editable details for the currently authenticated donor only."""
+    full_name = data.full_name.strip()
+    phone = data.phone.strip()
+    location = data.location.strip()
+    organization_name = (data.organization_name or "").strip() or None
+
+    if len(full_name) < 2:
+        raise HTTPException(status_code=422, detail="Please enter your full name.")
+    if len(phone) < 7:
+        raise HTTPException(status_code=422, detail="Please enter a valid phone number.")
+    if len(location) < 2:
+        raise HTTPException(status_code=422, detail="Please enter your location.")
+
+    if donor["account_type"] == "Organization" and not organization_name:
+        raise HTTPException(status_code=422, detail="Organization name is required.")
+    if donor["account_type"] == "Individual":
+        organization_name = None
+
+    execute_query(
+        """
+        UPDATE donor_accounts
+        SET full_name = %s,
+            phone = %s,
+            location = %s,
+            organization_name = %s
+        WHERE id = %s
+        """,
+        (full_name, phone, location, organization_name, donor["id"]),
+    )
+
+    updated_donor = fetch_one(
+        """
+        SELECT id, full_name, account_type, organization_name,
+               email, phone, location, verification_status,
+               email_verified, email_verified_at, created_at,
+               profile_photo_path
+        FROM donor_accounts
+        WHERE id = %s
+        """,
+        (donor["id"],),
+    )
+    if not updated_donor:
+        raise HTTPException(status_code=404, detail="Donor account not found.")
+
+    photo_path = updated_donor.get("profile_photo_path")
+    updated_donor["profile_photo_url"] = photo_path if photo_path else None
+
+    return {"message": "Profile updated successfully.", "donor": updated_donor}
+
+
+class DonorAccountDeletion(BaseModel):
+    password: str = Field(min_length=1, max_length=128)
+    confirmation: str = Field(min_length=1, max_length=20)
+
+
+@app.delete("/donors/me")
+def delete_my_donor_account(
+    data: DonorAccountDeletion,
+    donor=Depends(get_current_donor),
+):
+    """Delete the authenticated donor account while retaining anonymized donation records."""
+    if data.confirmation != "DELETE":
+        raise HTTPException(
+            status_code=400,
+            detail='Type DELETE exactly to confirm account removal.',
+        )
+
+    account = fetch_one(
+        "SELECT password_hash FROM donor_accounts WHERE id = %s",
+        (donor["id"],),
+    )
+    if not account or not verify_password(data.password, account["password_hash"]):
+        raise HTTPException(status_code=403, detail="Password is incorrect.")
+
+    connection = get_connection()
+    cursor = connection.cursor()
+    try:
+        # Keep donation/audit history, but remove identifying donor details.
+        cursor.execute(
+            """UPDATE donations
+               SET donor_name = 'Deleted donor', contact = '',
+                   status = CASE
+                       WHEN status IN ('Available', 'Reserved') THEN 'Cancelled'
+                       ELSE status
+                   END,
+                   donor_id = NULL
+               WHERE donor_id = %s""",
+            (donor["id"],),
+        )
+        cursor.execute(
+            "DELETE FROM donor_accounts WHERE id = %s",
+            (donor["id"],),
+        )
+        if cursor.rowcount != 1:
+            raise HTTPException(status_code=404, detail="Donor account was not found.")
+        connection.commit()
+    except HTTPException:
+        connection.rollback()
+        raise
+    except Exception:
+        connection.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Account deletion failed. No changes were saved.",
+        )
+    finally:
+        cursor.close()
+        connection.close()
+
+    # The account row is gone, so its photo should not stay on disk.
+    delete_photo_file(donor.get("profile_photo_path"))
+
+    return {
+        "message": "Your FoodShare account has been deleted. Your donation history was anonymized.",
+        "account_deleted": True,
+    }
 
 
 # --------------------------------------------------
@@ -1143,8 +2021,12 @@ def donor_dashboard(donor=Depends(get_current_donor)):
         (donor["id"],),
     )
 
+    # The dashboard shows the donor avatar, so hand back a ready-to-use URL.
+    donor_payload = dict(donor)
+    donor_payload["profile_photo_url"] = donor.get("profile_photo_path") or None
+
     return {
-        "donor": donor,
+        "donor": donor_payload,
         "summary": summary,
         "statistics": summary,
     }
