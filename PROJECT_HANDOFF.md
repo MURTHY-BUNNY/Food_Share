@@ -363,9 +363,12 @@ another donor's id answers 404 rather than 403 and leaks nothing.
 - Account enumeration: `/donors/password/forgot` replies identically for known
   and unknown addresses. `/donors/register` still answers 409 for an existing
   email (a signup has to say that).
-- Not implemented: rate limiting on `/donors/login` or `/admin/login`, CSRF
-  tokens (bearer headers make it low risk), refresh tokens, 2FA for donors.
-  JWTs live in `localStorage`/`sessionStorage`, so an XSS bug would expose them.
+- Donor and admin password login are limited to five attempts per minute per
+  client IP. The default limiter stores counters in this API process; use a
+  shared SlowAPI storage backend when deploying multiple API workers.
+- Not implemented: CSRF tokens (bearer headers make it low risk), refresh
+  tokens, 2FA for donors. JWTs live in `localStorage`/`sessionStorage`, so an
+  XSS bug would expose them.
 
 ---
 
@@ -467,8 +470,9 @@ Ordered by how much they matter.
 5. **Dependency list is stale.** `requirements.txt` declares `slowapi` and
    `pwdlib[argon2]`, neither of which is imported (the code uses `hashlib`), and
    omits `requests`, which `test_admin_api.py` needs.
-6. **No login rate limiting.** Codes are throttled; passwords are not. A simple
-   per-IP counter on the two login endpoints would close that.
+6. **Shared login-limit storage.** Login attempts are limited per IP, but the
+   default counters are in memory. Configure shared storage when running
+   multiple API workers or instances.
 7. **No pagination.** The admin console loads every donation, account and
    request at once. Fine at this size, awkward at a few thousand rows.
 8. **Legacy donations are detached.** Rows created before donor accounts were

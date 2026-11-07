@@ -18,12 +18,16 @@ from fastapi import (
     HTTPException,
     Header,
     Query,
+    Request,
     UploadFile,
     File,
 )
 from fastapi.staticfiles import StaticFiles
 import uuid
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from fastapi.security import (
     OAuth2PasswordRequestForm,
     HTTPBearer,
@@ -44,6 +48,13 @@ from emailer import (
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
+
+LOGIN_RATE_LIMIT = "5/minute"
+limiter = Limiter(
+    key_func=get_remote_address,
+    headers_enabled=True,
+)
+
 # --------------------------------------------------
 # DONOR PROFILE PHOTO STORAGE
 # --------------------------------------------------
@@ -285,6 +296,8 @@ app = FastAPI(
     version="1.1.0",
     lifespan=lifespan,
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.mount(
     "/uploads",
@@ -1524,7 +1537,8 @@ def google_donor_complete(data: GoogleDonorComplete):
 
 
 @app.post("/donors/login")
-def login_donor(form: OAuth2PasswordRequestForm = Depends()):
+@limiter.limit(LOGIN_RATE_LIMIT)
+def login_donor(request: Request, form: OAuth2PasswordRequestForm = Depends()):
     # OAuth2PasswordRequestForm expects URL-encoded fields:
     # username=<email>&password=<password>
     email = form.username.strip().lower()
@@ -2352,7 +2366,8 @@ def update_food_request_status(
 # --------------------------------------------------
 
 @app.post("/admin/login")
-def login_admin(data: AdminLogin):
+@limiter.limit(LOGIN_RATE_LIMIT)
+def login_admin(request: Request, data: AdminLogin):
     if not ADMIN_USERNAME or not ADMIN_PASSWORD_HASH:
         raise HTTPException(
             status_code=500,

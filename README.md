@@ -54,6 +54,10 @@ Email is in demo mode until SMTP settings are configured. In demo mode,
 verification codes are shown by the app. See [backend/EMAIL_SETUP.md](backend/EMAIL_SETUP.md)
 to configure email delivery.
 
+Donor and admin password sign-in is limited to five attempts per minute per
+client IP. The default limiter stores counters in this API process; deployments
+with multiple API workers should configure a shared SlowAPI storage backend.
+
 ## Tests and checks
 
 Run the email-domain validation tests:
