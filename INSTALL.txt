@@ -1,0 +1,25 @@
+FOODSHARE — SEPARATE DONOR PROFILE PAGE
+
+This package adds:
+  html/donor-profile.html
+  js/donor-profile.js
+  css/donor-profile.css
+  backend-patch/README.txt
+
+COPY FILES:
+  html/donor-profile.html -> E:\FoodShare\html\donor-profile.html
+  js/donor-profile.js -> E:\FoodShare\js\donor-profile.js
+  css/donor-profile.css -> E:\FoodShare\css\donor-profile.css
+
+NAVIGATION:
+In html/donor-dashboard.html, add this link immediately before the My Dashboard link:
+  <a href="donor-profile.html"><i class="bi bi-person-circle" aria-hidden="true"></i> Profile</a>
+
+Add the same link before My Dashboard in the shared navigation on other donor-facing pages if desired.
+
+BACKEND PHOTO SUPPORT:
+Follow backend-patch/README.txt carefully. This is an additive patch, not a replacement main.py/database.py. Preserve your already-working profile editing and password-change code.
+
+Open:
+  donor-profile.html
+The page uses the existing donor token key foodshare_donor_token and expects the profile update endpoint PUT /donors/me that you previously tested.

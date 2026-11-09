@@ -156,6 +156,19 @@ window.App = (function () {
       return payload.message;
     }
 
+    /*
+     * The rate limiter answers {"error": "Rate limit exceeded: 5 per 1 minute"}
+     * rather than the usual {"detail": ...} shape.
+     */
+
+    if (
+      payload &&
+      typeof payload.error === "string" &&
+      payload.error.trim()
+    ) {
+      return payload.error;
+    }
+
     if (status === 401) {
       return "Please sign in again.";
     }
@@ -175,8 +188,53 @@ window.App = (function () {
     return `Request failed (${status}).`;
   }
 
+  /*
+   * Some failures never reach the JSON handlers above: a 500 raised by the
+   * server middleware, a proxy error page, or an HTML traceback. Those bodies
+   * are text, so report the real status and the server's own words instead of
+   * a vague "unreadable response".
+   */
+
+  const MAX_SERVER_TEXT = 180;
+
+  function serverText(text) {
+
+    const collapsed = String(text || "")
+      .replace(/<[^>]*>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (!collapsed) {
+      return "";
+    }
+
+    return collapsed.length > MAX_SERVER_TEXT
+      ? `${collapsed.slice(0, MAX_SERVER_TEXT).trimEnd()}…`
+      : collapsed;
+  }
+
+  function describeRawResponse(text, status) {
+
+    const detail = serverText(text);
+
+    const code = status
+      ? `HTTP ${status}`
+      : "no HTTP status";
+
+    const headline =
+      status >= 500
+        ? "The FoodShare API failed"
+        : status >= 400
+          ? "The request was rejected"
+          : "The FoodShare API sent a reply this page cannot read";
+
+    return detail
+      ? `${headline} (${code}): ${detail}`
+      : `${headline} (${code}).`;
+  }
+
   /* =====================================================
-     MAIN API REQUEST FUNCTION
+     API CLIENT
      ===================================================== */
 
   async function request(path, options) {
@@ -295,17 +353,26 @@ window.App = (function () {
 
     const text = await response.text();
 
-    let payload = {};
+    const hasBody = Boolean(text && text.trim());
 
-    if (text) {
+    let payload = null;
+
+    if (hasBody) {
 
       try {
         payload = JSON.parse(text);
       } catch (error) {
 
-        throw new ApiError(
-          "The API returned an unreadable response.",
-          response.status
+        /*
+         * Keep the raw body: a non-JSON reply is usually a server error page,
+         * which is exactly the case where the real text is most useful.
+         */
+        payload = null;
+
+        console.error(
+          `FoodShare API returned a non-JSON reply for ${method} ${path} ` +
+          `(HTTP ${response.status}):`,
+          text
         );
 
       }
@@ -325,13 +392,27 @@ window.App = (function () {
       }
 
       throw new ApiError(
-        describeError(payload, response.status),
+        payload === null
+          ? describeRawResponse(text, response.status)
+          : describeError(payload, response.status),
         response.status,
         payload
       );
     }
 
-    return payload;
+    /* A successful reply with a body that is not JSON means the client and the
+       server disagree about the contract. Say so instead of returning {} and
+       letting the caller fail further down with a confusing error. */
+
+    if (payload === null && hasBody) {
+      throw new ApiError(
+        describeRawResponse(text, response.status),
+        response.status,
+        null
+      );
+    }
+
+    return payload === null ? {} : payload;
   }
 
   /* =====================================================

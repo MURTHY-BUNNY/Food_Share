@@ -39,7 +39,10 @@
     body.appendChild(state);
   }
 
-  function render(donation) {
+  function render(payload) {
+    const donation = payload.donation || payload;
+    const contactVisible = payload.contact_visible !== false;
+
     setText("detail-name", donation.food_name);
     setText("detail-id", `#${donation.id}`);
     setText("detail-category", donation.category);
@@ -74,7 +77,8 @@
     const phone = (donation.contact || "").replace(/[^\d+]/g, "");
 
     if (contact) {
-      contact.textContent = donation.contact || "Not provided";
+      contact.textContent = donation.contact
+        || (contactVisible ? "Not provided" : "Hidden for closed donations");
     }
 
     if (call) {
@@ -85,7 +89,7 @@
         call.setAttribute("aria-disabled", "true");
         call.classList.add("btn-secondary");
         call.classList.remove("btn");
-        call.textContent = "No number listed";
+        call.textContent = contactVisible ? "No number listed" : "Contact hidden";
       }
     }
 
@@ -105,7 +109,7 @@
 
     try {
       const data = await App.request(`/donations/${encodeURIComponent(id)}`);
-      render(data.donation || data);
+      render(data);
     } catch (error) {
       if (error.status === 404) {
         showMissing("That donation no longer exists", "It may have been removed by the donor.");

@@ -4,6 +4,7 @@ from urllib.parse import urlencode
 from unittest.mock import patch
 
 from fastapi import HTTPException
+from fastapi.routing import APIRoute
 
 import main
 from main import is_single_character_typo, validate_email_domain
@@ -12,6 +13,57 @@ from main import is_single_character_typo, validate_email_domain
 class EmailDomainValidationTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         main.limiter.reset()
+
+    async def test_unhandled_server_error_includes_cors_headers(self):
+        async def raise_unhandled_error():
+            raise RuntimeError("test-only server error")
+
+        route = APIRoute(
+            "/__test_unhandled_server_error",
+            raise_unhandled_error,
+            methods=["GET"],
+        )
+        main.app.app.router.routes.append(route)
+        sent = []
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            sent.append(message)
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/__test_unhandled_server_error",
+            "raw_path": b"/__test_unhandled_server_error",
+            "query_string": b"",
+            "headers": [
+                (b"host", b"localhost"),
+                (b"origin", b"http://127.0.0.1:5501"),
+            ],
+            "server": ("localhost", 80),
+            "client": ("127.0.0.1", 12345),
+            "root_path": "",
+        }
+
+        try:
+            with self.assertRaisesRegex(RuntimeError, "test-only server error"):
+                await main.app(scope, receive, send)
+        finally:
+            main.app.app.router.routes.remove(route)
+
+        response = next(
+            item for item in sent if item["type"] == "http.response.start"
+        )
+        self.assertEqual(response["status"], 500)
+        self.assertIn(
+            (b"access-control-allow-origin", b"http://127.0.0.1:5501"),
+            response["headers"],
+        )
 
     async def request(self, method, path, payload, client_ip):
         is_form = path == "/donors/login"

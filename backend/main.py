@@ -19,6 +19,7 @@ from fastapi import (
     Header,
     Query,
     Request,
+    Response,
     UploadFile,
     File,
 )
@@ -50,6 +51,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
 LOGIN_RATE_LIMIT = "5/minute"
+
+# The public donation page is reachable without a session, so cap how fast ids
+# can be walked. A browser opening a listing uses a handful of requests.
+DETAIL_RATE_LIMIT = "60/minute"
+
+# Donation statuses whose donor contact number may be published.
+CONTACT_VISIBLE_STATUSES = ("Available", "Reserved")
 limiter = Limiter(
     key_func=get_remote_address,
     headers_enabled=True,
@@ -312,15 +320,6 @@ configured_origins = [
     for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
     if origin.strip()
 ]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["null", *configured_origins],
-    allow_origin_regex=r"^(https?://(localhost|127\.0\.0\.1)(:\d+)?)$",
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 DONOR_TOKEN_SECRET = os.getenv("DONOR_TOKEN_SECRET", "")
 ADMIN_TOKEN_SECRET = os.getenv("ADMIN_TOKEN_SECRET", "")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "")
@@ -990,9 +989,14 @@ class GoogleDonorComplete(BaseModel):
     location: str = Field(min_length=2, max_length=255)
 
 
+DonationItemType = Literal["Food", "Drink"]
+
+
 class DonationCreate(BaseModel):
     food_name: str = Field(min_length=2, max_length=200)
-    item_type: str = Field(min_length=1, max_length=100)
+    # Kept to the two values the donations.item_type column accepts. Anything
+    # else used to reach the database and come back as a 500.
+    item_type: DonationItemType
     quantity: float = Field(gt=0, le=1000000)
     quantity_unit: str = Field(default="items", max_length=30)
     category: str = Field(min_length=1, max_length=100)
@@ -1008,7 +1012,7 @@ class DonationCreate(BaseModel):
 
 class DonationUpdate(BaseModel):
     food_name: Optional[str] = Field(default=None, min_length=2, max_length=200)
-    item_type: Optional[str] = Field(default=None, max_length=100)
+    item_type: Optional[DonationItemType] = None
     quantity: Optional[float] = Field(default=None, gt=0, le=1000000)
     quantity_unit: Optional[str] = Field(default=None, max_length=30)
     category: Optional[str] = Field(default=None, max_length=100)
@@ -1018,6 +1022,39 @@ class DonationUpdate(BaseModel):
     contact: Optional[str] = Field(default=None, max_length=30)
     expiry_date: Optional[datetime] = None
     packaging_condition: Optional[str] = Field(default=None, max_length=100)
+
+
+# Columns a donor may edit on their own donation. Everything else in the
+# donations table is server-owned (status, donor_id, timestamps).
+EDITABLE_DONATION_FIELDS = {
+    "food_name",
+    "item_type",
+    "quantity",
+    "quantity_unit",
+    "category",
+    "location",
+    "pickup_deadline",
+    "donor_name",
+    "contact",
+    "expiry_date",
+    "packaging_condition",
+}
+
+# Only these columns accept NULL. For every other editable column an explicit
+# null in the request body means "leave it as it is" rather than "clear it",
+# because writing NULL into a NOT NULL column fails with a 500.
+NULLABLE_DONATION_FIELDS = {"expiry_date", "packaging_condition"}
+
+# Text columns that must still hold something after trimming.
+REQUIRED_DONATION_TEXT_FIELDS = {
+    "food_name",
+    "item_type",
+    "quantity_unit",
+    "category",
+    "location",
+    "donor_name",
+    "contact",
+}
 
 
 class EmailVerification(BaseModel):
@@ -1192,8 +1229,8 @@ def verify_donor_email(data: EmailVerification):
             ),
         )
 
-    consume_code(email, "signup", data.code)
-
+    # Check for an existing account before spending the code, so a duplicate
+    # sign-up does not burn a code the donor could still need.
     if fetch_one("SELECT id FROM donor_accounts WHERE email = %s", (email,)):
         execute_query(
             "DELETE FROM pending_registrations WHERE email = %s",
@@ -1203,6 +1240,8 @@ def verify_donor_email(data: EmailVerification):
             status_code=409,
             detail="An account with this email already exists.",
         )
+
+    consume_code(email, "signup", data.code)
 
     verification = (
         "Pending" if pending["account_type"] == "Organization" else "Verified"
@@ -1538,7 +1577,16 @@ def google_donor_complete(data: GoogleDonorComplete):
 
 @app.post("/donors/login")
 @limiter.limit(LOGIN_RATE_LIMIT)
-def login_donor(request: Request, form: OAuth2PasswordRequestForm = Depends()):
+def login_donor(
+    request: Request,
+    response: Response,
+    form: OAuth2PasswordRequestForm = Depends(),
+):
+    # `response` is required, not unused: the limiter writes X-RateLimit-*
+    # headers into it. slowapi raises "parameter `response` must be an instance
+    # of starlette.responses.Response" when a rate-limited endpoint returns a
+    # plain dict without declaring it. FastAPI merges those headers into the
+    # JSON response it builds from the dict returned below.
     # OAuth2PasswordRequestForm expects URL-encoded fields:
     # username=<email>&password=<password>
     email = form.username.strip().lower()
@@ -1614,7 +1662,15 @@ def forgot_donor_password(data: EmailRequest):
         (email,),
     )
 
+    # The code is requested before the account lookup so an unknown address
+    # waits out exactly the same resend cooldown as a registered one. Asking
+    # twice quickly returns 429 either way, which keeps this endpoint from
+    # revealing who has an account.
+    code = issue_code(email, "reset", RESET_CODE_TTL_MINUTES)
+
     if not donor:
+        # No mail is sent: the cooldown row exists only to keep the timing and
+        # status codes identical, and purge_stale_otp_data clears it later.
         return {
             "message": message,
             "verification_required": True,
@@ -1624,7 +1680,6 @@ def forgot_donor_password(data: EmailRequest):
             "resend_after_seconds": OTP_RESEND_SECONDS,
         }
 
-    code = issue_code(email, "reset", RESET_CODE_TTL_MINUTES)
     mode = send_code_email(
         email,
         "reset",
@@ -2067,6 +2122,17 @@ def create_donation(
             detail="Expiry date cannot be in the past.",
         )
 
+    # The donor may post a different name/number for this listing; when they
+    # leave the fields out, fall back to the account they signed in with.
+    donor_name = (data.donor_name or "").strip() or donor["full_name"]
+    contact = (data.contact or "").strip() or donor["phone"]
+
+    if len(contact) < 7:
+        raise HTTPException(
+            status_code=422,
+            detail="Enter a contact number with at least 7 characters.",
+        )
+
     donation_id, _ = execute_query(
         """
         INSERT INTO donations
@@ -2084,8 +2150,8 @@ def create_donation(
             data.category.strip(),
             data.location.strip(),
             pickup_deadline,
-            donor["full_name"],
-            donor["phone"],
+            donor_name,
+            contact,
             expiry_date.date() if expiry_date else None,
             data.packaging_condition,
             "Available",
@@ -2122,7 +2188,28 @@ def update_my_donation(
             detail="Only available donations can be edited.",
         )
 
-    updates = data.model_dump(exclude_unset=True)
+    updates = {
+        key: value
+        for key, value in data.model_dump(exclude_unset=True).items()
+        if key in EDITABLE_DONATION_FIELDS
+    }
+
+    # Drop explicit nulls for the NOT NULL columns instead of forwarding them.
+    updates = {
+        key: value
+        for key, value in updates.items()
+        if value is not None or key in NULLABLE_DONATION_FIELDS
+    }
+
+    for key in REQUIRED_DONATION_TEXT_FIELDS:
+        if isinstance(updates.get(key), str):
+            updates[key] = updates[key].strip()
+
+            if not updates[key]:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"{key.replace('_', ' ').capitalize()} cannot be empty.",
+                )
 
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update.")
@@ -2130,21 +2217,6 @@ def update_my_donation(
     if "quantity" in updates and updates["quantity"] is not None:
         if updates["quantity"] <= 0:
             raise HTTPException(status_code=422, detail="Quantity must be positive.")
-
-    allowed_fields = {
-        "food_name", "item_type", "quantity", "quantity_unit",
-        "category", "location", "pickup_deadline", "donor_name",
-        "contact", "expiry_date", "packaging_condition",
-    }
-
-    updates = {
-        key: value
-        for key, value in updates.items()
-        if key in allowed_fields
-    }
-
-    if not updates:
-        raise HTTPException(status_code=400, detail="No valid fields to update.")
 
     if "pickup_deadline" in updates and updates["pickup_deadline"] is not None:
         deadline = to_server_local(updates["pickup_deadline"])
@@ -2157,6 +2229,12 @@ def update_my_donation(
 
     if "expiry_date" in updates and updates["expiry_date"] is not None:
         expiry = to_server_local(updates["expiry_date"])
+        # Same rule as creation, so an edit cannot backdate an expiry.
+        if expiry.date() < datetime.now().date():
+            raise HTTPException(
+                status_code=422,
+                detail="Expiry date cannot be in the past.",
+            )
         updates["expiry_date"] = expiry.date()
 
     assignments = ", ".join(f"{column} = %s" for column in updates)
@@ -2281,7 +2359,10 @@ def list_donations(
 
 
 @app.get("/donations/{donation_id}")
-def get_donation(donation_id: int):
+@limiter.limit(DETAIL_RATE_LIMIT)
+def get_donation(request: Request, response: Response, donation_id: int):
+    # `response` is required by the limiter, which writes the rate-limit headers
+    # into it; see the note on login_donor.
     donation = fetch_one(
         """
         SELECT id, food_name, item_type, quantity, quantity_unit,
@@ -2296,7 +2377,16 @@ def get_donation(donation_id: int):
     if not donation:
         raise HTTPException(status_code=404, detail="Donation not found.")
 
-    return {"donation": donation}
+    # The number is published only while the food can still be collected, which
+    # is the same set of donations the public listing already shows. Once a
+    # donation is completed, cancelled or expired its donor's number stops being
+    # readable, so walking the id space cannot harvest phone numbers.
+    contact_visible = donation["status"] in CONTACT_VISIBLE_STATUSES
+
+    if not contact_visible:
+        donation["contact"] = None
+
+    return {"donation": donation, "contact_visible": contact_visible}
 
 
 # --------------------------------------------------
@@ -2367,7 +2457,9 @@ def update_food_request_status(
 
 @app.post("/admin/login")
 @limiter.limit(LOGIN_RATE_LIMIT)
-def login_admin(request: Request, data: AdminLogin):
+def login_admin(request: Request, response: Response, data: AdminLogin):
+    # `response` is required, not unused: the limiter writes X-RateLimit-*
+    # headers into it. Without it slowapi raises on the successful login path.
     if not ADMIN_USERNAME or not ADMIN_PASSWORD_HASH:
         raise HTTPException(
             status_code=500,
@@ -2610,6 +2702,18 @@ def admin_complete_donation(
         "donation_id": donation_id,
         "status": "Completed",
     }
+
+
+# Wrap the complete FastAPI application so CORS headers are also added to
+# unexpected 500 responses generated by Starlette's outer error middleware.
+app = CORSMiddleware(
+    app=app,
+    allow_origins=["null", *configured_origins],
+    allow_origin_regex=r"^(https?://(localhost|127\.0\.0\.1)(:\d+)?)$",
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # --------------------------------------------------
 # APPLICATION ENTRY POINT

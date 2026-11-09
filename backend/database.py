@@ -1,10 +1,12 @@
 
 import os
 import re
+import threading
+import time
 from contextlib import contextmanager
 
 import mysql.connector
-from mysql.connector import Error
+from mysql.connector import Error, pooling
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -49,6 +51,27 @@ COLUMN_ADDITIONS = [
     ("donor_accounts", "password_changed_at", "DATETIME NULL"),
     ("donor_accounts", "google_sub", "VARCHAR(255) NULL"),
     ("donor_accounts", "profile_photo_path", "VARCHAR(500) NULL"),
+]
+
+# Older installs were created with shorter VARCHARs than the code validates
+# against. A value that passes validation but does not fit the column makes
+# MySQL answer "Data truncated for column ..." (a 500), so widen them to the
+# width declared by the CREATE statements above.
+COLUMN_WIDENINGS = [
+    ("donations", "food_name", "VARCHAR(200) NOT NULL"),
+    ("donations", "quantity_unit", "VARCHAR(30) NOT NULL DEFAULT 'items'"),
+    ("donations", "location", "VARCHAR(255) NOT NULL"),
+    ("donor_accounts", "organization_name", "VARCHAR(200) NULL"),
+    ("donor_accounts", "location", "VARCHAR(255) NOT NULL"),
+]
+
+# Secondary indexes declared by the CREATE TABLE statements below. Databases
+# created before those statements existed have none of them, which turns every
+# status filter, category filter and donor lookup into a full table scan.
+INDEXES = [
+    ("donations", "idx_donations_donor_id", "donor_id"),
+    ("donations", "idx_donations_status", "status"),
+    ("donations", "idx_donations_category", "category"),
 ]
 
 def _column_type(cursor, table, column):
@@ -106,6 +129,53 @@ def _sync_enum_column(cursor, spec):
     return f"{table}.{column}"
 
 
+def _has_index(cursor, table, index_name):
+    cursor.execute(
+        """
+        SELECT COUNT(*)
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = %s
+          AND INDEX_NAME = %s
+        """,
+        (table, index_name),
+    )
+
+    return cursor.fetchone()[0] > 0
+
+
+def _ensure_index(cursor, table, index_name, columns):
+    """Add a missing secondary index; return its name only when created."""
+    if _has_index(cursor, table, index_name):
+        return None
+
+    cursor.execute(f"ALTER TABLE {table} ADD INDEX {index_name} ({columns})")
+
+    return f"{table}.{index_name}"
+
+
+def _widen_column(cursor, table, column, definition):
+    """Enlarge a VARCHAR column that is narrower than the current schema."""
+    current = _column_type(cursor, table, column)
+
+    if current is None:
+        return None
+
+    target = re.search(r"VARCHAR\((\d+)\)", definition, re.IGNORECASE)
+    existing = re.match(r"varchar\((\d+)\)", current.strip(), re.IGNORECASE)
+
+    # ENUM and other non-VARCHAR columns are managed by their own sync rules.
+    if not target or not existing:
+        return None
+
+    if int(existing.group(1)) >= int(target.group(1)):
+        return None
+
+    cursor.execute(f"ALTER TABLE {table} MODIFY COLUMN {column} {definition}")
+
+    return f"{table}.{column}"
+
+
 def sync_schema(connection, cursor):
     """Bring an existing database up to the schema this code expects."""
     changes = []
@@ -117,19 +187,13 @@ def sync_schema(connection, cursor):
             )
             changes.append(f"{table}.{column}")
 
-    cursor.execute(
-        """
-        SELECT COUNT(*)
-        FROM information_schema.STATISTICS
-        WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_NAME = 'donor_accounts'
-          AND INDEX_NAME = 'uq_donor_google_sub'
-        """
-    )
+    for table, column, definition in COLUMN_WIDENINGS:
+        widened = _widen_column(cursor, table, column, definition)
 
-    index_exists = cursor.fetchone()[0] > 0
+        if widened:
+            changes.append(f"{widened} (widened)")
 
-    if not index_exists:
+    if not _has_index(cursor, "donor_accounts", "uq_donor_google_sub"):
         cursor.execute(
             """
             ALTER TABLE donor_accounts
@@ -137,6 +201,12 @@ def sync_schema(connection, cursor):
             """
         )
         changes.append("donor_accounts.google_sub unique index")
+
+    for table, index_name, columns in INDEXES:
+        created = _ensure_index(cursor, table, index_name, columns)
+
+        if created:
+            changes.append(created)
 
     for spec in ENUM_COLUMNS:
         changed = _sync_enum_column(cursor, spec)
@@ -165,20 +235,76 @@ def get_db_config():
     }
 
 
-def get_connection():
-    """Create and return a MySQL database connection."""
+POOL_NAME = "foodshare_pool"
+DEFAULT_POOL_SIZE = 10
+POOL_WAIT_SECONDS = 5.0
+POOL_RETRY_DELAY = 0.02
+
+_pool = None
+_pool_lock = threading.Lock()
+
+
+def get_pool_size():
+    """Pool size from DB_POOL_SIZE, clamped to what the driver allows."""
     try:
-        connection = mysql.connector.connect(**get_db_config())
+        size = int(os.getenv("DB_POOL_SIZE", "") or DEFAULT_POOL_SIZE)
+    except (TypeError, ValueError):
+        size = DEFAULT_POOL_SIZE
 
-        if connection.is_connected():
-            return connection
+    return max(1, min(size, pooling.CNX_POOL_MAXSIZE))
 
-        raise RuntimeError("Unable to connect to MySQL.")
 
-    except Error as exc:
-        raise RuntimeError(
-            f"MySQL connection failed: {exc}"
-        ) from exc
+def get_pool():
+    """Create the pool on first use.
+
+    Building it lazily keeps a database outage from breaking the import: the
+    API starts, and /health reports the connection problem instead.
+    """
+    global _pool
+
+    if _pool is not None:
+        return _pool
+
+    with _pool_lock:
+        if _pool is None:
+            try:
+                _pool = pooling.MySQLConnectionPool(
+                    pool_name=POOL_NAME,
+                    pool_size=get_pool_size(),
+                    # Rolls back anything left open when a connection is
+                    # returned, so one request cannot inherit another's state.
+                    pool_reset_session=True,
+                    **get_db_config(),
+                )
+            except Error as exc:
+                raise RuntimeError(
+                    f"MySQL connection pool could not start: {exc}"
+                ) from exc
+
+    return _pool
+
+
+def get_connection():
+    """Borrow a pooled connection. Close it to hand it back to the pool."""
+    pool = get_pool()
+    give_up_at = time.monotonic() + POOL_WAIT_SECONDS
+
+    while True:
+        try:
+            return pool.get_connection()
+        except pooling.PoolError as exc:
+            # The driver does not wait for a free connection, so a burst of
+            # requests would otherwise surface as a 500.
+            if time.monotonic() >= give_up_at:
+                raise RuntimeError(
+                    "MySQL is busy: no pooled connection became available."
+                ) from exc
+
+            time.sleep(POOL_RETRY_DELAY)
+        except Error as exc:
+            raise RuntimeError(
+                f"MySQL connection failed: {exc}"
+            ) from exc
 
 
 @contextmanager
